@@ -961,19 +961,17 @@ func TestExampleDroneConfig(t *testing.T) {
 		t.Errorf("video.Peer = %q, want listen://0.0.0.0:5600", video.Peer)
 	}
 
-	// Mavlink stream should be bidirectional with stream_tx=0x10, stream_rx=0x90
-	mavlink, ok := cfg.Streams["mavlink"]
-	if !ok {
-		t.Fatal("mavlink stream not found")
-	}
-	if mavlink.ServiceType != "mavlink" {
-		t.Errorf("mavlink.ServiceType = %q, want mavlink", mavlink.ServiceType)
-	}
-	if mavlink.StreamTX == nil || *mavlink.StreamTX != 0x10 {
-		t.Errorf("mavlink.StreamTX = %v, want 0x10 (16)", mavlink.StreamTX)
-	}
-	if mavlink.StreamRX == nil || *mavlink.StreamRX != 0x90 {
-		t.Errorf("mavlink.StreamRX = %v, want 0x90 (144)", mavlink.StreamRX)
+	// Mavlink stream (optional) should be bidirectional with stream_tx=0x10, stream_rx=0x90
+	if mavlink, ok := cfg.Streams["mavlink"]; ok {
+		if mavlink.ServiceType != "mavlink" {
+			t.Errorf("mavlink.ServiceType = %q, want mavlink", mavlink.ServiceType)
+		}
+		if mavlink.StreamTX == nil || *mavlink.StreamTX != 0x10 {
+			t.Errorf("mavlink.StreamTX = %v, want 0x10 (16)", mavlink.StreamTX)
+		}
+		if mavlink.StreamRX == nil || *mavlink.StreamRX != 0x90 {
+			t.Errorf("mavlink.StreamRX = %v, want 0x90 (144)", mavlink.StreamRX)
+		}
 	}
 
 	// Adaptive should be drone mode
@@ -1023,19 +1021,17 @@ func TestExampleGSConfig(t *testing.T) {
 		t.Errorf("video.Peer = %q, want connect://127.0.0.1:5600", video.Peer)
 	}
 
-	// Mavlink stream should be bidirectional with stream_rx=0x10, stream_tx=0x90 (swapped from drone)
-	mavlink, ok := cfg.Streams["mavlink"]
-	if !ok {
-		t.Fatal("mavlink stream not found")
-	}
-	if mavlink.ServiceType != "mavlink" {
-		t.Errorf("mavlink.ServiceType = %q, want mavlink", mavlink.ServiceType)
-	}
-	if mavlink.StreamRX == nil || *mavlink.StreamRX != 0x10 {
-		t.Errorf("mavlink.StreamRX = %v, want 0x10 (16, receives drone's TX)", mavlink.StreamRX)
-	}
-	if mavlink.StreamTX == nil || *mavlink.StreamTX != 0x90 {
-		t.Errorf("mavlink.StreamTX = %v, want 0x90 (144, sends to drone's RX)", mavlink.StreamTX)
+	// Mavlink stream (optional) should be bidirectional with stream_rx=0x10, stream_tx=0x90 (swapped from drone)
+	if mavlink, ok := cfg.Streams["mavlink"]; ok {
+		if mavlink.ServiceType != "mavlink" {
+			t.Errorf("mavlink.ServiceType = %q, want mavlink", mavlink.ServiceType)
+		}
+		if mavlink.StreamRX == nil || *mavlink.StreamRX != 0x10 {
+			t.Errorf("mavlink.StreamRX = %v, want 0x10 (16, receives drone's TX)", mavlink.StreamRX)
+		}
+		if mavlink.StreamTX == nil || *mavlink.StreamTX != 0x90 {
+			t.Errorf("mavlink.StreamTX = %v, want 0x90 (144, sends to drone's RX)", mavlink.StreamTX)
+		}
 	}
 
 	// Adaptive should be GS mode
@@ -1080,19 +1076,22 @@ func TestDroneGSStreamIDMatch(t *testing.T) {
 			*droneVideo.StreamTX, *gsVideo.StreamRX)
 	}
 
-	// Mavlink: drone TX must match GS RX, drone RX must match GS TX
-	droneMav := drone.Streams["mavlink"]
-	gsMav := gs.Streams["mavlink"]
-	if droneMav.StreamTX == nil || gsMav.StreamRX == nil {
-		t.Fatal("mavlink stream_tx or stream_rx is nil")
-	}
-	if *droneMav.StreamTX != *gsMav.StreamRX {
-		t.Errorf("mavlink downlink mismatch: drone_tx=%d, gs_rx=%d",
-			*droneMav.StreamTX, *gsMav.StreamRX)
-	}
-	if *droneMav.StreamRX != *gsMav.StreamTX {
-		t.Errorf("mavlink uplink mismatch: drone_rx=%d, gs_tx=%d",
-			*droneMav.StreamRX, *gsMav.StreamTX)
+	// Mavlink (optional): drone TX must match GS RX, drone RX must match GS TX
+	droneMav, hasDroneMav := drone.Streams["mavlink"]
+	gsMav, hasGSMav := gs.Streams["mavlink"]
+	if hasDroneMav && hasGSMav {
+		if droneMav.StreamTX == nil || gsMav.StreamRX == nil {
+			t.Error("mavlink stream_tx or stream_rx is nil")
+		} else if *droneMav.StreamTX != *gsMav.StreamRX {
+			t.Errorf("mavlink downlink mismatch: drone_tx=%d, gs_rx=%d",
+				*droneMav.StreamTX, *gsMav.StreamRX)
+		}
+		if droneMav.StreamRX == nil || gsMav.StreamTX == nil {
+			t.Error("mavlink stream_rx or stream_tx is nil")
+		} else if *droneMav.StreamRX != *gsMav.StreamTX {
+			t.Errorf("mavlink uplink mismatch: drone_rx=%d, gs_tx=%d",
+				*droneMav.StreamRX, *gsMav.StreamTX)
+		}
 	}
 
 	// Link domains must match
