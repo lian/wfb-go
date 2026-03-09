@@ -126,6 +126,7 @@ type StreamStats struct {
 	Dropped     uint64  `json:"dropped,omitempty"`
 	FecK        int     `json:"fec_k,omitempty"`
 	FecN        int     `json:"fec_n,omitempty"`
+	MCS         *int    `json:"mcs,omitempty"`
 }
 
 // StreamInfo holds information about a stream for the API.

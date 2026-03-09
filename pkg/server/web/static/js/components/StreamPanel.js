@@ -66,6 +66,10 @@ export default {
                             <span class="stream-stat-label">FEC</span>
                             <span class="stream-stat-value">{{ fecLabel(stream) }}</span>
                         </div>
+                        <div class="stream-stat" v-if="stream.mcs !== undefined && stream.mcs !== null">
+                            <span class="stream-stat-label">MCS</span>
+                            <span class="stream-stat-value">{{ stream.mcs }}</span>
+                        </div>
                         <div class="stream-stat" v-if="stream.fec_recovery !== undefined">
                             <span class="stream-stat-label">Recovered</span>
                             <span class="stream-stat-value good">{{ stream.fec_recovery || 0 }}</span>

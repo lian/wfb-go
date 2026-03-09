@@ -119,6 +119,7 @@ type ServiceStatsSnapshot struct {
 	SessionEpoch uint64
 	SessionFecK  int
 	SessionFecN  int
+	SessionMCS   int
 }
 
 // StatsAggregatorConfig holds configuration for the stats aggregator.
@@ -318,6 +319,7 @@ func (s *StatsAggregator) buildAggregatedStatsLocked(interval time.Duration) *Ag
 			SessionEpoch:    stats.SessionEpoch,
 			SessionFecK:     stats.SessionFecK,
 			SessionFecN:     stats.SessionFecN,
+			SessionMCS:      stats.SessionMCS,
 		}
 
 		// Calculate rates if we have previous stats

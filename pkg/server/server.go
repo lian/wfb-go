@@ -659,6 +659,7 @@ func (s *Server) pushWebStats() {
 
 		if hasRX || !hasTX {
 			// Show as RX stream (or default if no activity)
+			mcs := svc.SessionMCS
 			webStats.Streams = append(webStats.Streams, web.StreamStats{
 				Name:        name,
 				Type:        "rx",
@@ -670,10 +671,12 @@ func (s *Server) pushWebStats() {
 				DecErrors:   svc.PacketsDecErr,
 				FecK:        svc.SessionFecK,
 				FecN:        svc.SessionFecN,
+				MCS:         &mcs,
 			})
 		}
 		if hasTX {
 			// Show as TX stream
+			mcs := svc.SessionMCS
 			webStats.Streams = append(webStats.Streams, web.StreamStats{
 				Name:       name,
 				Type:       "tx",
@@ -681,6 +684,9 @@ func (s *Server) pushWebStats() {
 				ByteRate:   svc.TxBytesRate,
 				Packets:    svc.PacketsInjected,
 				Dropped:    svc.PacketsDropped,
+				FecK:       svc.SessionFecK,
+				FecN:       svc.SessionFecN,
+				MCS:        &mcs,
 			})
 		}
 

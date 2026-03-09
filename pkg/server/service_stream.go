@@ -461,11 +461,12 @@ func (s *StreamService) Stats() *ServiceStats {
 		s.stats.PacketsLost = rxStats.PacketsLost
 		s.stats.PacketsOutgoing = rxStats.PacketsOutgoing
 		s.stats.BytesOutgoing = rxStats.BytesOutgoing
-		// FEC parameters from TX session
+		// Session info from TX
+		s.stats.SessionEpoch = rxStats.Epoch
 		s.stats.SessionFecK = rxStats.FecK
 		s.stats.SessionFecN = rxStats.FecN
 
-		// Copy antenna stats from forwarder
+		// Copy antenna stats from forwarder and extract MCS
 		if rxStats.AntennaStats != nil {
 			if s.stats.AntennaStats == nil {
 				s.stats.AntennaStats = make(map[uint32]*AntennaStats)
@@ -492,6 +493,11 @@ func (s *StreamService) Stats() *ServiceStats {
 					SNRAvg:          snrAvg,
 					SNRMax:          rxAnt.SNRMax,
 				}
+
+				// Use MCS from any active antenna (all should be same from TX)
+				if rxAnt.PacketsReceived > 0 {
+					s.stats.SessionMCS = int(rxAnt.MCSIndex)
+				}
 			}
 		}
 		s.stats.mu.Unlock()
@@ -508,10 +514,11 @@ func (s *StreamService) Stats() *ServiceStats {
 	s.stats.PacketsInjected = injected
 	s.stats.BytesInjected = bytes
 	s.stats.FECTimeouts = fecTimeouts
-	// Set TX FEC params from config for TX services
+	// Set TX params from config for TX services
 	if len(s.transmitters) > 0 {
 		s.stats.SessionFecK = s.cfg.FecK
 		s.stats.SessionFecN = s.cfg.FecN
+		s.stats.SessionMCS = s.cfg.MCSIndex
 	}
 	s.stats.mu.Unlock()
 

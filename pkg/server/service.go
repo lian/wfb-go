@@ -96,6 +96,7 @@ type ServiceStats struct {
 	SessionEpoch uint64
 	SessionFecK  int
 	SessionFecN  int
+	SessionMCS   int
 
 	// Antenna stats
 	AntennaStats map[uint32]*AntennaStats
@@ -402,6 +403,7 @@ func (s *ServiceStats) Clone() *ServiceStats {
 		SessionEpoch:    s.SessionEpoch,
 		SessionFecK:     s.SessionFecK,
 		SessionFecN:     s.SessionFecN,
+		SessionMCS:      s.SessionMCS,
 		AntennaStats:    make(map[uint32]*AntennaStats),
 	}
 

@@ -50,9 +50,10 @@ type Stats struct {
 	PacketsOutgoing uint64 // Output packets
 	BytesOutgoing   uint64 // Output bytes (count_b_all)
 
-	// FEC parameters from TX session (0 if no session received yet)
-	FecK int
-	FecN int
+	// Session info from TX (0 if no session received yet)
+	Epoch uint64
+	FecK  int
+	FecN  int
 
 	// Per-antenna statistics (keyed by wlanIdx<<8 | antennaIdx)
 	AntennaStats map[uint32]*AntennaStats
@@ -782,7 +783,8 @@ func (a *Aggregator) outputFragment(fragment []byte, blockIdx uint64, fragIdx ui
 func (a *Aggregator) Stats() Stats {
 	stats := a.stats.snapshot()
 
-	// Add FEC parameters from current session
+	// Add session info from current session
+	stats.Epoch = a.epoch
 	stats.FecK = a.fecK
 	stats.FecN = a.fecN
 
@@ -799,7 +801,8 @@ func (a *Aggregator) Stats() Stats {
 func (a *Aggregator) StatsWithAntennas() Stats {
 	stats := a.stats.snapshot()
 
-	// Add FEC parameters from current session
+	// Add session info from current session
+	stats.Epoch = a.epoch
 	stats.FecK = a.fecK
 	stats.FecN = a.fecN
 
