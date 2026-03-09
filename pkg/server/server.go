@@ -429,38 +429,40 @@ func (s *Server) collectStats() {
 		case <-s.statsStopCh:
 			return
 		case <-ticker.C:
+			// Collect service stats under server lock
 			s.mu.Lock()
-
-			// Collect service stats and latency
+			serviceStats := make(map[string]*ServiceStats)
 			allLatency := make(map[uint32]LatencyStatsData)
 			for _, svc := range s.services {
-				stats := svc.Stats()
-				s.aggregator.UpdateStats(svc.Name(), stats)
-
-				// Collect latency stats if service provides them
+				serviceStats[svc.Name()] = svc.Stats()
 				if lp, ok := svc.(LatencyProvider); ok {
 					for k, v := range lp.GetLatencyStats() {
 						allLatency[k] = v
 					}
 				}
 			}
+			var rfTemps map[uint32]int
+			if s.rfTempMeter != nil {
+				rfTemps = s.rfTempMeter.GetTemperatures()
+			}
+			hasWebServer := s.webServer != nil
+			s.mu.Unlock()
 
-			// Update latency stats
+			// Update aggregator outside server lock (prevents deadlock with antenna callback)
+			for name, stats := range serviceStats {
+				s.aggregator.UpdateStats(name, stats)
+			}
 			if len(allLatency) > 0 {
 				s.aggregator.UpdateLatencyStats(allLatency)
 			}
-
-			// Update RF temperature
-			if s.rfTempMeter != nil {
-				s.aggregator.UpdateRFTemperature(s.rfTempMeter.GetTemperatures())
+			if rfTemps != nil {
+				s.aggregator.UpdateRFTemperature(rfTemps)
 			}
 
-			// Push stats to web server if enabled
-			if s.webServer != nil {
+			// Push stats to web server
+			if hasWebServer {
 				s.pushWebStats()
 			}
-
-			s.mu.Unlock()
 		}
 	}
 }

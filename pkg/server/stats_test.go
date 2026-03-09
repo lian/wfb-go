@@ -126,9 +126,12 @@ func TestStatsAggregatorRateCalculation(t *testing.T) {
 	})
 
 	// Set up initial stats
+	// RX rate is calculated from PacketsOutgoing (deduplicated output)
 	agg.UpdateStats("svc1", &ServiceStats{
 		PacketsReceived: 100,
 		BytesReceived:   1000,
+		PacketsOutgoing: 100,
+		BytesOutgoing:   1000,
 		PacketsInjected: 50,
 	})
 
@@ -137,6 +140,8 @@ func TestStatsAggregatorRateCalculation(t *testing.T) {
 	agg.lastStats["svc1"] = &ServiceStats{
 		PacketsReceived: 100,
 		BytesReceived:   1000,
+		PacketsOutgoing: 100,
+		BytesOutgoing:   1000,
 		PacketsInjected: 50,
 	}
 	agg.mu.Unlock()
@@ -145,6 +150,8 @@ func TestStatsAggregatorRateCalculation(t *testing.T) {
 	agg.UpdateStats("svc1", &ServiceStats{
 		PacketsReceived: 150,
 		BytesReceived:   1500,
+		PacketsOutgoing: 150,
+		BytesOutgoing:   1500,
 		PacketsInjected: 100,
 	})
 

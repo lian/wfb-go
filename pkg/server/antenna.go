@@ -68,7 +68,6 @@ func (s *TXAntennaSelector) AddCallback(cb func(wlanIdx uint8)) {
 // 4. Apply RSSI hysteresis before switching
 func (s *TXAntennaSelector) Update(stats map[uint32]*AggregatedAntennaStats) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	// Aggregate stats per wlan - use max RSSI and max packets from all antennas
 	wlanStats := make(map[uint8]*wlanAggStats)
@@ -102,6 +101,7 @@ func (s *TXAntennaSelector) Update(stats map[uint32]*AggregatedAntennaStats) {
 	}
 
 	if maxPackets == 0 {
+		s.mu.Unlock()
 		return // No packets received
 	}
 
@@ -127,6 +127,7 @@ func (s *TXAntennaSelector) Update(stats map[uint32]*AggregatedAntennaStats) {
 	}
 
 	if len(eligibleWlans) == 0 {
+		s.mu.Unlock()
 		return // No eligible wlans
 	}
 
@@ -145,6 +146,7 @@ func (s *TXAntennaSelector) Update(stats map[uint32]*AggregatedAntennaStats) {
 	}
 
 	if bestWlan == nil {
+		s.mu.Unlock()
 		return
 	}
 
@@ -179,6 +181,9 @@ func (s *TXAntennaSelector) Update(stats map[uint32]*AggregatedAntennaStats) {
 		}
 	}
 
+	// Track if we need to call callbacks (after releasing lock)
+	var notifyWlan *uint8
+
 	if shouldSwitch {
 		oldWlan := s.selectedWlan
 		s.selectedWlan = bestWlan
@@ -186,20 +191,26 @@ func (s *TXAntennaSelector) Update(stats map[uint32]*AggregatedAntennaStats) {
 		s.lastBestRSSI = bestRSSI
 		s.lastBestPackets = wlanStats[*bestWlan].packets
 
-		// Log and notify callbacks
+		// Log the change
 		if oldWlan == nil || *oldWlan != *bestWlan {
 			if oldWlan == nil {
 				log.Printf("TX antenna selected: wlan%d (RSSI=%ddB, pkts=%d)",
 					*bestWlan, bestRSSI, s.lastBestPackets)
 			} else {
-				// Get old RSSI (use currentRSSI which handles missing wlan)
 				log.Printf("TX antenna switch: wlan%d (RSSI=%ddB) -> wlan%d (RSSI=%ddB, delta=%+ddB)",
 					*oldWlan, currentRSSI, *bestWlan, bestRSSI, int(bestRSSI)-int(currentRSSI))
 			}
+			wlan := *bestWlan
+			notifyWlan = &wlan
+		}
+	}
 
-			for _, cb := range s.callbacks {
-				cb(*bestWlan)
-			}
+	// Release lock before calling callbacks (prevents deadlock with server lock)
+	s.mu.Unlock()
+
+	if notifyWlan != nil {
+		for _, cb := range s.callbacks {
+			cb(*notifyWlan)
 		}
 	}
 }

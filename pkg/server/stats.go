@@ -238,7 +238,6 @@ func (s *StatsAggregator) aggregateLoop() {
 
 func (s *StatsAggregator) aggregate() {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 
 	now := time.Now()
 	interval := now.Sub(s.lastStatsTime)
@@ -263,7 +262,9 @@ func (s *StatsAggregator) aggregate() {
 	// Store for GetStats() to return
 	s.lastAggStats = aggStats
 
-	// Notify callbacks
+	// Release lock before calling callbacks
+	s.mu.Unlock()
+
 	for _, cb := range s.callbacks {
 		cb(aggStats)
 	}
@@ -323,10 +324,11 @@ func (s *StatsAggregator) buildAggregatedStatsLocked(interval time.Duration) *Ag
 		}
 
 		// Calculate rates if we have previous stats
+		// Use PacketsOutgoing for RX rate (deduplicated, actual throughput)
 		if last, ok := s.lastStats[name]; ok {
-			snapshot.RxRate = float64(stats.PacketsReceived-last.PacketsReceived) / intervalSecs
+			snapshot.RxRate = float64(stats.PacketsOutgoing-last.PacketsOutgoing) / intervalSecs
 			snapshot.TxRate = float64(stats.PacketsInjected-last.PacketsInjected) / intervalSecs
-			snapshot.RxBytesRate = float64(stats.BytesReceived-last.BytesReceived) / intervalSecs
+			snapshot.RxBytesRate = float64(stats.BytesOutgoing-last.BytesOutgoing) / intervalSecs
 			snapshot.TxBytesRate = float64(stats.BytesInjected-last.BytesInjected) / intervalSecs
 			snapshot.FECRate = float64(stats.PacketsFECRec-last.PacketsFECRec) / intervalSecs
 			snapshot.ErrRate = float64(stats.PacketsDecErr-last.PacketsDecErr) / intervalSecs
