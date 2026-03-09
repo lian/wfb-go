@@ -1,0 +1,340 @@
+# =============================================================================
+# WFB-Go Ground Station Configuration
+# =============================================================================
+# This configuration is for the GROUND STATION side of a wifibroadcast link.
+# The GS receives video, exchanges telemetry, and sends link stats to drone.
+#
+# IMPORTANT: The drone and ground station must use:
+#   - Same link.id (or link.domain) for matching MAC addresses
+#   - Same link.key (encryption)
+#   - Same channel and bandwidth
+#   - Matching stream_ids (TX stream_id on drone = RX stream_id on GS)
+
+# =============================================================================
+# HARDWARE - WiFi card and radio settings
+# =============================================================================
+hardware:
+  # WiFi interfaces in monitor mode (required)
+  # Using multiple cards provides antenna diversity:
+  #   - RX diversity: Best signal from multiple antennas is used
+  #   - TX diversity: Can select best antenna for uplink
+  # Directional + omnidirectional antenna combo is ideal
+  wlans: [wlan1, wlan2]
+
+  # Must match drone configuration
+  region: BO
+  channel: 149
+  bandwidth: 20
+
+  # TX power for uplink (telemetry, commands)
+  # GS typically needs less power since drone is usually further away
+  # and the uplink (commands) is lower bandwidth than downlink (video)
+  tx_power: 20
+
+  # NOTE: Radio parameters (MCS, Short GI, STBC, LDPC) are now configured
+  # per-stream rather than globally. See the stream configs below.
+
+  # Capture mode for RX (wfb-go specific, not in wfb-ng)
+  #   dedicated: One pcap handle per stream (default)
+  #              - Better isolation between streams
+  #              - More kernel overhead
+  #   shared:    One pcap handle per interface, demuxed in userspace
+  #              - Lower latency
+  #              - Less kernel overhead
+  #              - Recommended for high-throughput scenarios
+  # capture_mode: dedicated
+
+  # Per-interface channel overrides (optional)
+  # Use different channels on different cards for frequency diversity
+  # channel_overrides:
+  #   wlan1: 36
+  #   wlan2: 149
+
+  # Per-interface TX power overrides (optional)
+  # tx_power_overrides:
+  #   wlan1: 25
+  #   wlan2: 30
+
+# =============================================================================
+# LINK - Identity and encryption (must match drone)
+# =============================================================================
+link:
+  # Link domain - MUST match drone's configuration exactly
+  # This string is hashed (SHA1) to generate unique MAC addresses for the link
+  # "default" is the OpenIPC standard, ensuring compatibility with stock firmware
+  domain: default
+  #
+  # Encryption key file path
+  key: /etc/wfb/gs.key        # Same key content as drone (can be different filename)
+  #
+  # Alternative: Base64-encoded key (useful for containers, env vars)
+  # Generate with: base64 -w0 /etc/wfb/gs.key
+  # key_base64: "u7ftboOkaoqbihKg+Y7OK9yXhwW4IEcBsghfooyse0YOBcSKYZX7cJIcdHpm6DwC5kC9a761slFTepiidBaiYw=="
+
+# =============================================================================
+# STREAMS - Data channels over the radio link
+# =============================================================================
+# GS streams are the "mirror" of drone streams:
+#   - Drone stream_tx -> GS stream_rx (same stream ID)
+#   - GS stream_tx -> Drone stream_rx (same stream ID)
+#
+# SERVICE TYPES:
+#   udp_direct_tx - TX only, sends to radio
+#   udp_direct_rx - RX only, receives from radio (video to player)
+#   udp_proxy     - Bidirectional UDP proxy (protocol-agnostic)
+#   mavlink       - Bidirectional MAVLink with RSSI injection
+#   tunnel        - Bidirectional IP tunnel (creates TUN device)
+#
+# PEER FORMATS:
+#   listen://0.0.0.0:5600      - UDP server (receive from local app)
+#   connect://127.0.0.1:5600   - UDP client (send to local app)
+#   serial:/dev/ttyUSB0:115200 - Serial port
+#   tcp://0.0.0.0:5760         - TCP server (for QGC, etc.)
+#
+# STREAM_ID ALLOCATION (per wfb-ng standard):
+#   Downlink (drone -> GS): 0 - 127
+#   Uplink (GS -> drone):   128 - 255
+#
+#   Ranges:
+#     0-15 / 128-143:   Video streams (0x00)
+#     16-31 / 144-159:  Telemetry streams (0x10 / 0x90)
+#     32-47 / 160-175:  Tunnel streams (0x20 / 0xa0)
+#     48-63 / 176-191:  MSP/custom streams (0x30 / 0xb0)
+#
+# For bidirectional services on GS, stream IDs are SWAPPED from drone:
+#   - Drone: stream_tx=0x10 (sends), stream_rx=0x90 (receives)
+#   - GS:    stream_rx=0x10 (receives), stream_tx=0x90 (sends)
+
+streams:
+  # ---------------------------------------------------------------------------
+  # VIDEO STREAM (Drone TX -> GS RX)
+  # ---------------------------------------------------------------------------
+  # Receives video from drone and outputs to local app
+  video:
+    service_type: udp_direct_rx    # RX only (drone sends, GS receives)
+    stream_rx: 0                   # Receive on stream 0 (matches drone's stream_tx)
+
+    # Peer: where to send received video
+    # Point your video player/decoder here:
+    #   gst-launch-1.0 udpsrc port=5600 ! ...
+    #   ffplay udp://127.0.0.1:5600
+    peer: "connect://127.0.0.1:5600"
+
+    # FEC settings must match drone's TX settings for proper decoding
+    # The receiver uses these to know the block structure
+    fec: [8, 12]
+
+    # NOTE: Radio params (mcs, stbc, ldpc, short_gi) only affect TX.
+    # For RX-only streams like this video receiver, they are not used.
+    # The receiver decodes whatever radio params the transmitter used.
+
+    # Advanced FEC settings
+    # fec_timeout: 0       # [ms] FEC block timeout, 0 = disabled
+    # fec_delay: 0         # [us] Inter-packet delay for pacing
+
+    # Per-stream encryption key (optional, defaults to link.key)
+    # key: /etc/wfb/video.key
+
+  # ---------------------------------------------------------------------------
+  # TUNNEL STREAM (Bidirectional IP tunnel)
+  # ---------------------------------------------------------------------------
+  # Creates a virtual network interface for IP traffic
+  # Required for adaptive link to send stats to drone
+  tunnel:
+    service_type: tunnel
+    stream_rx: 0x20              # 32: Receive downlink tunnel (from drone)
+    stream_tx: 0xa0              # 160: Send uplink tunnel (to drone)
+    fec: [1, 2]
+    # fwmark: 30
+
+    tunnel:
+      ifname: wfb-tun            # TUN interface name
+      ifaddr: 10.5.0.1/24        # GS IP (drone is 10.5.0.10/24)
+      default_route: false       # Don't route all traffic through tunnel
+
+  # ---------------------------------------------------------------------------
+  # MAVLINK STREAM (Bidirectional: Drone <-> GS)
+  # ---------------------------------------------------------------------------
+  # Receives telemetry from drone, sends commands to drone
+  # Note: stream IDs are swapped from drone (GS receives what drone sends)
+  #
+  # mavlink:
+  #   service_type: mavlink
+  #   stream_rx: 0x10                # 16: Receive downlink telemetry (from drone)
+  #   stream_tx: 0x90                # 144: Send uplink commands (to drone)
+  #
+  #   # Peer: GCS connection (QGroundControl, Mission Planner)
+  #   peer: "connect://127.0.0.1:14550"
+  #
+  #   fec: [1, 2]
+  #
+  #   # Radio params for uplink TX (commands to drone)
+  #   # Use robust settings - commands must get through reliably
+  #   mcs: 1
+  #   short_gi: false
+  #   stbc: 1
+  #   ldpc: 1
+  #
+  #   # fwmark: 10           # Traffic shaper label
+  #
+  #   mavlink:
+  #     # Inject RADIO_STATUS messages with link quality info
+  #     # GS measures downlink quality and shows it in QGroundControl
+  #     inject_rssi: true
+  #
+  #     # MAVLink system/component ID for injected messages
+  #     sys_id: 51
+  #     comp_id: 68           # MAV_COMP_ID_TELEMETRY_RADIO
+  #
+  #     # Forward telemetry to additional destinations (OSD, logging, etc.)
+  #     # osd: "connect://127.0.0.1:14560"
+  #
+  #     # TCP server for multiple GCS connections
+  #     # tcp_port: 5760
+  #
+  #     # Log all MAVLink messages (debug)
+  #     # log_messages: false
+
+  # ---------------------------------------------------------------------------
+  # MSP STREAM (Bidirectional: for Betaflight/INAV configurator)
+  # ---------------------------------------------------------------------------
+  # Use udp_proxy for MSP, CRSF, or any non-MAVLink protocol
+  # No RSSI injection or arm callbacks - just raw bidirectional UDP
+  #
+  # msp:
+  #   service_type: udp_proxy
+  #   stream_rx: 0x30              # 48: Receive downlink MSP (from drone)
+  #   stream_tx: 0xb0              # 176: Send uplink MSP (to drone)
+  #
+  #   # Connect to Betaflight Configurator or similar
+  #   peer: "connect://127.0.0.1:5760"
+  #
+  #   fec: [1, 2]
+  #   # fwmark: 10
+
+# =============================================================================
+# ADAPTIVE LINK - Send link stats to drone
+# =============================================================================
+# In GS mode, adaptive link:
+#   1. Monitors received signal quality (RSSI, SNR, packet loss)
+#   2. Calculates a link quality score (1000-2000)
+#   3. Sends score to drone so it can adjust TX parameters
+#
+# The GS does NOT adjust its own TX parameters (uplink is always robust)
+
+adaptive:
+  enabled: true
+
+  # Mode: "gs" calculates and sends link quality to drone
+  mode: gs
+
+  # Where to send link quality stats (drone's IP and listen_port)
+  # For direct connection: use drone's wfb tunnel IP
+  # The drone receives this on its adaptive.listen_port
+  send_addr: "10.5.0.10:9999"
+
+  # ---------------------------------------------------------------------------
+  # Score Calculation
+  # ---------------------------------------------------------------------------
+  # GS calculates score from RSSI and SNR of received packets
+  # Score = (rssi_score * rssi_weight) + (snr_score * snr_weight)
+  # Each component is normalized to 0-1000 range, then scaled by weight
+
+  score_weights:
+    snr: 0.5                  # 50% weight to Signal-to-Noise Ratio
+    rssi: 0.5                 # 50% weight to Received Signal Strength
+
+  # How to map raw RSSI/SNR values to 0-1000 score
+  # Values at or below min -> 0, at or above max -> 1000
+  score_ranges:
+    snr_min: 12               # SNR of 12 dB = score 0 (very poor)
+    snr_max: 38               # SNR of 38 dB = score 1000 (excellent)
+    rssi_min: -80             # RSSI of -80 dBm = score 0
+    rssi_max: -30             # RSSI of -30 dBm = score 1000
+
+  # ---------------------------------------------------------------------------
+  # Kalman Filter for Error Rate Estimation
+  # ---------------------------------------------------------------------------
+  # Smooths packet loss measurements to avoid overreacting to bursts
+  kalman:
+    estimate: 0.005
+    error_estimate: 0.1
+    process_variance: 0.00001
+    measurement_variance: 0.01
+
+  # ---------------------------------------------------------------------------
+  # Keyframe Requests
+  # ---------------------------------------------------------------------------
+  # GS can request keyframes from drone when it detects video corruption
+  # (e.g., after packet loss that FEC couldn't recover)
+  allow_keyframe: true
+
+  # Minimum interval between keyframe requests
+  keyframe_interval: 1112ms
+
+# =============================================================================
+# API - Status and control interfaces
+# =============================================================================
+api:
+  enabled: true
+
+  # GS uses different ports than drone (both may run on same machine for testing)
+  stats_port: 8003            # MsgPack API for wfb_cli
+  json_port: 8103             # JSON API for integrations
+
+  # Stats logging interval in ms
+  log_interval: 1000
+
+# =============================================================================
+# WEB UI - Browser-based video player and stats dashboard
+# =============================================================================
+# Serves a web interface for viewing the video stream directly in a browser.
+# Video is sent directly from the RX service to the web server (no UDP needed).
+#
+# Open http://localhost:8080 in your browser (Safari recommended for HEVC).
+#
+web:
+  enabled: true
+  port: 8080                  # HTTP server port
+  video_stream: video         # Name of the stream to display (must match a streams entry)
+
+# =============================================================================
+# COMMON - Global settings
+# =============================================================================
+common:
+  # Enable verbose debug logging
+  debug: false
+
+  # Primary instance - sets radio channel (default: true)
+  # Set to false for secondary instances sharing the same radio
+  primary: true
+
+  # Radio MTU size (default: 1445)
+  # Used for MAVLink/tunnel packet aggregation
+  radio_mtu: 1445
+
+  # Tunnel packet aggregation timeout (seconds)
+  tunnel_agg_timeout: 0.005
+
+  # MAVLink packet aggregation timeout (seconds)
+  mavlink_agg_timeout: 0.1
+
+  # Stats logging interval (ms)
+  log_interval: 1000
+
+  # TX antenna selection (when using multiple cards)
+  # Switch TX antenna if RSSI difference exceeds this threshold
+  tx_sel_rssi_delta: 3        # dB
+
+  # UDP buffer sizes (increase if seeing drops under high load)
+  tx_rcv_buf_size: 2097152    # 2 MB - SO_RCVBUF for TX
+  rx_snd_buf_size: 2097152    # 2 MB - SO_SNDBUF for RX
+
+# =============================================================================
+# PATHS - System paths (optional)
+# =============================================================================
+# paths:
+#   conf_dir: /etc/wfb
+#   bin_dir: /usr/bin
+#   tmp_dir: /tmp
+#   log_dir: /var/log

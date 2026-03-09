@@ -1,0 +1,97 @@
+name: Build
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            suffix: linux_amd64
+          - goos: linux
+            goarch: arm64
+            suffix: linux_arm64
+          - goos: linux
+            goarch: arm
+            goarm: 7
+            suffix: linux_armv7
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # For git describe
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Set version info
+        id: version
+        run: |
+          VERSION=${GITHUB_REF_NAME}
+          if [[ ! "$VERSION" =~ ^v ]]; then
+            VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+          fi
+          GIT_COMMIT=$(git rev-parse --short HEAD)
+          BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "git_commit=${GIT_COMMIT}" >> $GITHUB_OUTPUT
+          echo "build_date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+
+      - name: Build binaries
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: 0
+        run: |
+          VERSION_PKG="github.com/lian/wfb-go/pkg/version"
+          LDFLAGS="-s -w -X ${VERSION_PKG}.Version=${{ steps.version.outputs.version }} -X ${VERSION_PKG}.GitCommit=${{ steps.version.outputs.git_commit }} -X ${VERSION_PKG}.BuildDate=${{ steps.version.outputs.build_date }}"
+
+          mkdir -p dist/${{ matrix.suffix }}
+
+          for cmd in wfb_server wfb_keygen wfb_tx wfb_rx wfb_cli wfb_tx_cmd wfb_tun; do
+            echo "Building ${cmd}..."
+            go build -ldflags="${LDFLAGS}" -o dist/${{ matrix.suffix }}/${cmd} ./cmd/${cmd}
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: wfb-go-${{ matrix.suffix }}
+          path: dist/${{ matrix.suffix }}/
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Create release archives
+        run: |
+          cd artifacts
+          for dir in */; do
+            name="${dir%/}"
+            tar -czvf "../${name}.tar.gz" -C "$dir" .
+          done
+
+      - name: Create release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: '*.tar.gz'
+          generate_release_notes: true

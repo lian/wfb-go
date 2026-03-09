@@ -1,0 +1,557 @@
+# =============================================================================
+# WFB-Go Drone Configuration
+# =============================================================================
+# This configuration is for the DRONE (air unit) side of a wifibroadcast link.
+# The drone transmits video and bidirectionally exchanges telemetry/control.
+#
+# IMPORTANT: The drone and ground station must use:
+#   - Same link.id (or link.domain) for matching MAC addresses
+#   - Same link.key (encryption)
+#   - Same channel and bandwidth
+#   - Matching stream_ids (TX stream_id on drone = RX stream_id on GS)
+
+# =============================================================================
+# HARDWARE - WiFi card and radio settings
+# =============================================================================
+hardware:
+  # WiFi interfaces in monitor mode (required)
+  # Use multiple cards for diversity - improves reliability
+  # Cards should support monitor mode and packet injection
+  # Common compatible cards: RTL8812AU, RTL8812BU, AR9271
+  wlans: [wlan1]
+
+  # Regulatory region (default: BO)
+  # BO (Bolivia) is most permissive, allowing all channels at high power
+  # Set to your actual region for legal compliance: US, EU, JP, AU, etc.
+  region: BO
+
+  # WiFi channel (required)
+  # 5GHz channels recommended for video (more bandwidth, less interference):
+  #   UNII-1: 36, 40, 44, 48 (indoor, lower power)
+  #   UNII-3: 149, 153, 157, 161, 165 (outdoor, higher power allowed)
+  # 2.4GHz channels (longer range but more interference): 1, 6, 11
+  channel: 149
+
+  # Channel bandwidth (required: 20 or 40)
+  # 20 MHz: More robust, better range, lower throughput
+  # 40 MHz: Higher throughput, but requires cleaner spectrum
+  # Recommendation: Start with 20, use 40 only if you need >15 Mbps
+  bandwidth: 20
+
+  # TX power in dBm (optional, nil = driver default)
+  # Higher power = more range but also more interference
+  # Legal limits vary by region (typically 20-30 dBm for 5GHz)
+  # Some cards ignore this; check with `iw dev wlan0 info`
+  tx_power: 20
+
+  # NOTE: Radio parameters (MCS, Short GI, STBC, LDPC) are now configured
+  # per-stream rather than globally. See the stream configs below.
+
+  # Capture mode for RX (wfb-go specific, not in wfb-ng)
+  #   dedicated: One pcap handle per stream (default)
+  #              - Better isolation between streams
+  #              - More kernel overhead
+  #   shared:    One pcap handle per interface, demuxed in userspace
+  #              - Lower latency
+  #              - Less kernel overhead
+  #              - Recommended for high-throughput scenarios
+  # capture_mode: dedicated
+
+  # Per-interface channel overrides (optional)
+  # Use different channels on different cards for frequency diversity
+  # channel_overrides:
+  #   wlan1: 36
+  #   wlan2: 149
+
+  # Per-interface TX power overrides (optional)
+  # tx_power_overrides:
+  #   wlan1: 25
+  #   wlan2: 30
+
+# =============================================================================
+# LINK - Identity and encryption
+# =============================================================================
+link:
+  # Link domain - MUST match between drone and ground station
+  # This string is hashed (SHA1) to generate unique MAC addresses for the link
+  # "default" is the OpenIPC standard, ensuring compatibility with stock firmware
+  domain: default
+
+  # Encryption key (optional but highly recommended)
+  # Generate with: wfb-keygen
+  # Copy the same key to both drone and ground station
+  # Without encryption, anyone nearby can receive your video!
+  #
+  # Option 1: Key file path
+  key: /etc/wfb/drone.key
+  #
+  # Option 2: Base64-encoded key (useful for containers, env vars)
+  # Generate with: base64 -w0 /etc/wfb/drone.key
+  # key_base64: "u7ftboOkaoqbihKg+Y7OK9yXhwW4IEcBsghfooyse0YOBcSKYZX7cJIcdHpm6DwC5kC9a761slFTepiidBaiYw=="
+
+# =============================================================================
+# STREAMS - Data channels over the radio link
+# =============================================================================
+# Each stream is an independent data channel with its own:
+#   - service_type: How data is handled
+#   - stream_tx/stream_rx: Stream IDs (0-255) that link TX and RX sides
+#   - peer: Connection string (listen://, connect://, serial:, tcp://)
+#   - FEC settings: Error correction level
+#
+# SERVICE TYPES:
+#   udp_direct_tx - TX only, sends to radio (video from encoder)
+#   udp_direct_rx - RX only, receives from radio
+#   udp_proxy     - Bidirectional UDP proxy (protocol-agnostic)
+#   mavlink       - Bidirectional MAVLink with RSSI injection, arm callbacks
+#   tunnel        - Bidirectional IP tunnel (creates TUN device)
+#
+# PEER FORMATS:
+#   listen://0.0.0.0:5600      - UDP server (receive from local app)
+#   connect://127.0.0.1:5600   - UDP client (send to local app)
+#   serial:/dev/ttyUSB0:115200 - Serial port (for direct FC connection)
+#   tcp://0.0.0.0:5760         - TCP server (for QGC, etc.)
+#
+# STREAM_ID ALLOCATION (per wfb-ng standard):
+#   Downlink (drone -> GS): 0 - 127
+#   Uplink (GS -> drone):   128 - 255
+#
+#   Ranges within each direction:
+#     0-15 / 128-143:   Video streams (0 = primary video down)
+#     16-31 / 144-159:  Telemetry streams (0x10 / 0x90)
+#     32-47 / 160-175:  Tunnel streams (0x20 / 0xa0)
+#     48-63 / 176-191:  MSP/custom streams (0x30 / 0xb0)
+#
+# For bidirectional services (mavlink, tunnel, udp_proxy):
+#   - Set BOTH stream_tx (downlink) AND stream_rx (uplink)
+#   - Drone: stream_tx=0x10, stream_rx=0x90
+#   - GS:    stream_rx=0x10, stream_tx=0x90 (swapped!)
+
+streams:
+  # ---------------------------------------------------------------------------
+  # VIDEO STREAM (Drone TX -> GS RX)
+  # ---------------------------------------------------------------------------
+  # Primary video feed from camera to ground station
+  video:
+    service_type: udp_direct_tx    # TX only (drone sends, GS receives)
+    stream_tx: 0                   # Downlink video on stream 0
+
+    # Peer: where to receive video from
+    # Point your video encoder (gstreamer, ffmpeg, camera) here
+    peer: "listen://0.0.0.0:5600"
+
+    # FEC (Forward Error Correction): [k, n]
+    #   k = data packets per block
+    #   n = total packets per block (data + parity)
+    #   Overhead = (n-k)/k, e.g., [8,12] = 50% overhead
+    #   More parity = better loss recovery but more bandwidth used
+    #
+    # Recommendations:
+    #   [8, 12]  - 50% overhead, good for moderate interference
+    #   [4, 6]   - 50% overhead, lower latency (smaller blocks)
+    #   [12, 18] - 50% overhead, better burst loss recovery
+    #   [1, 2]   - 100% overhead, maximum protection (for critical data)
+    fec: [8, 12]
+
+    # Radio settings for this stream (per-packet via radiotap injection)
+    # These can be different per stream - e.g., robust settings for telemetry,
+    # higher throughput for video.
+    #
+    # MCS (Modulation and Coding Scheme) index - controls data rate
+    #   MCS 0: 6.5 Mbps   - Most robust, longest range
+    #   MCS 1: 13 Mbps    - Good balance (recommended default)
+    #   MCS 2: 19.5 Mbps  - Medium
+    #   MCS 3: 26 Mbps    - Requires good signal
+    #   MCS 4: 39 Mbps    - Requires strong signal
+    # Note: Actual throughput is ~50-70% of PHY rate after overhead
+    mcs: 1
+
+    # Short Guard Interval (default: false)
+    # false = 800ns GI (more robust, better for multipath)
+    # true = 400ns GI (11% faster, but less tolerant of interference)
+    short_gi: false
+
+    # STBC - Space-Time Block Coding (default: 1)
+    # 0 = disabled, 1 = enabled (recommended if card supports it)
+    stbc: 1
+
+    # LDPC - Low-Density Parity-Check (default: 1)
+    # 0 = disabled, 1 = enabled (recommended if card supports it)
+    ldpc: 1
+
+    # Bandwidth for this stream (usually matches hardware bandwidth)
+    # bandwidth: 20
+
+    # Advanced FEC settings
+    # fec_timeout: 0       # [ms] FEC block timeout, 0 = disabled
+    # fec_delay: 0         # [us] Inter-packet delay for pacing
+
+    # Per-stream encryption key (optional, defaults to link.key)
+    # key: /etc/wfb/video.key
+
+    # Advanced TX settings
+    # mirror: false        # TX via all antennas simultaneously
+    # control_port: 9876   # wfb_tx_cmd control port for runtime changes
+    # use_qdisc: false     # Use kernel qdisc for traffic shaping
+    # fwmark: 20           # Packet mark for tc traffic control
+    # frame_type: data     # "data" or "rts" frame type
+    # injection_retries: 0 # Number of injection retries
+
+  # ---------------------------------------------------------------------------
+  # TUNNEL STREAM (Bidirectional IP tunnel)
+  # ---------------------------------------------------------------------------
+  # Creates a TUN device for arbitrary IP traffic (SSH, custom protocols, etc.)
+  # Required for adaptive link to send stats from GS to drone
+  tunnel:
+    service_type: tunnel
+    stream_tx: 0x20              # 32: Downlink tunnel (drone -> GS)
+    stream_rx: 0xa0              # 160: Uplink tunnel (GS -> drone)
+    fec: [1, 2]
+    # fwmark: 30
+
+    tunnel:
+      ifname: wfb-tun            # TUN interface name
+      ifaddr: 10.5.0.10/24       # Drone IP (GS is 10.5.0.1/24)
+      default_route: false       # Don't route all traffic through tunnel
+
+  # ---------------------------------------------------------------------------
+  # MAVLINK STREAM (Bidirectional: Drone <-> GS)
+  # ---------------------------------------------------------------------------
+  # MAVLink telemetry and control
+  # Uses "mavlink" service_type for RSSI injection and arm/disarm callbacks
+  #
+  # mavlink:
+  #   service_type: mavlink
+  #   stream_tx: 0x10                # 16: Downlink telemetry (drone -> GS)
+  #   stream_rx: 0x90                # 144: Uplink commands (GS -> drone)
+  #
+  #   # Peer: flight controller connection
+  #   # Option A: UDP to/from mavlink-router or similar
+  #   peer: "listen://0.0.0.0:14560"
+  #   # Option B: Direct serial to flight controller
+  #   # peer: "serial:/dev/ttyAMA0:115200"
+  #
+  #   # Lower FEC overhead for telemetry - it's lower bandwidth
+  #   # and MAVLink has its own checksums
+  #   fec: [1, 2]
+  #
+  #   # Radio params for downlink telemetry TX
+  #   # Use robust settings to ensure telemetry gets through
+  #   mcs: 1
+  #   short_gi: false
+  #   stbc: 1
+  #   ldpc: 1
+  #
+  #   # fwmark: 10           # Traffic shaper label
+  #
+  #   # MAVLink-specific features
+  #   mavlink:
+  #     # RSSI injection is typically done on GS side only
+  #     # (GS measures downlink quality and shows it in QGroundControl)
+  #     # Enable here only if you want uplink quality sent to flight controller
+  #     inject_rssi: false
+  #
+  #     # MAVLink system/component ID for injected messages
+  #     # Avoid conflicts: FC is typically 1, GCS is 255
+  #     sys_id: 51
+  #     comp_id: 68           # MAV_COMP_ID_TELEMETRY_RADIO
+  #
+  #     # Forward to secondary destination (OSD, logging)
+  #     # osd: "connect://127.0.0.1:14561"
+  #
+  #     # TCP server for multiple GCS connections
+  #     # tcp_port: 5760
+  #
+  #     # Log all MAVLink messages (debug)
+  #     # log_messages: false
+  #
+  #     # Scripts to run on arm/disarm (e.g., start/stop recording)
+  #     # call_on_arm: "/usr/bin/start-recording.sh"
+  #     # call_on_disarm: "/usr/bin/stop-recording.sh"
+
+  # ---------------------------------------------------------------------------
+  # MSP STREAM (Bidirectional: for Betaflight/INAV)
+  # ---------------------------------------------------------------------------
+  # Use udp_proxy for MSP, CRSF, or any non-MAVLink protocol
+  # No RSSI injection or arm callbacks - just raw bidirectional UDP
+  #
+  # msp:
+  #   service_type: udp_proxy
+  #   stream_tx: 0x30              # 48: Downlink MSP (drone -> GS)
+  #   stream_rx: 0xb0              # 176: Uplink MSP (GS -> drone)
+  #
+  #   # Serial connection to flight controller
+  #   peer: "serial:/dev/ttyAMA0:115200"
+  #
+  #   fec: [1, 2]
+  #   # fwmark: 10
+
+# =============================================================================
+# ADAPTIVE LINK - Dynamic TX parameter adjustment
+# =============================================================================
+# Adaptive link monitors link quality (from GS feedback) and adjusts:
+#   - MCS index (data rate)
+#   - FEC settings
+#   - Video bitrate (via external commands)
+#   - TX power
+#
+# This allows the system to automatically:
+#   - Increase quality when signal is strong
+#   - Fall back to robust settings when signal degrades
+#   - Recover quickly when conditions improve
+
+adaptive:
+  enabled: true
+
+  # Mode: "drone" receives stats from GS and adjusts TX parameters
+  mode: drone
+
+  # UDP port to receive link quality stats from ground station
+  listen_port: 9999
+
+  # ---------------------------------------------------------------------------
+  # TX Profiles - Parameter sets for different link quality levels
+  # ---------------------------------------------------------------------------
+  # Score ranges from 1000 (worst) to 2000 (best)
+  # GS calculates score from RSSI and SNR, sends to drone
+  # Drone selects profile based on score
+  #
+  # Profiles MUST be ordered by range (lowest first)
+  # Ranges should not overlap
+
+  profiles:
+    # EMERGENCY profile - used when link is very poor or lost
+    - range: [999, 999]       # Special "fallback" range
+      mcs: 0                  # Lowest MCS = most robust
+      short_gi: false
+      fec: [2, 6]             # Heavy FEC (200% overhead)
+      bitrate: 1000           # Very low bitrate (kbps)
+      gop: 0.5                # Frequent keyframes for fast recovery
+      power: 30               # Maximum TX power
+      bandwidth: 20
+      qp_delta: 0
+      # roi_qp: "0,0,0,0"     # ROI QP values for encoder
+
+    # POOR link quality
+    - range: [1000, 1200]
+      mcs: 1
+      short_gi: false
+      fec: [4, 8]             # 100% overhead
+      bitrate: 4000
+      gop: 1
+      power: 30
+      bandwidth: 20
+      qp_delta: -12
+
+    # MODERATE link quality
+    - range: [1201, 1500]
+      mcs: 2
+      short_gi: false
+      fec: [8, 12]            # 50% overhead
+      bitrate: 8000
+      gop: 2
+      power: 25
+      bandwidth: 20
+      qp_delta: -12
+
+    # GOOD link quality
+    - range: [1501, 1800]
+      mcs: 3
+      short_gi: false
+      fec: [8, 12]
+      bitrate: 12000
+      gop: 2
+      power: 20
+      bandwidth: 20
+      qp_delta: -12
+
+    # EXCELLENT link quality
+    - range: [1801, 2000]
+      mcs: 4
+      short_gi: true          # Can use short GI with strong signal
+      fec: [10, 12]           # 20% overhead
+      bitrate: 18000
+      gop: 3
+      power: 20
+      bandwidth: 20
+      qp_delta: -12
+
+  # Load profiles from external file instead of inline
+  # profiles_file: /etc/wfb/txprofiles.conf
+
+  # ---------------------------------------------------------------------------
+  # Timing Parameters
+  # ---------------------------------------------------------------------------
+
+  # If no stats received for this duration, fall back to emergency profile
+  fallback_timeout: 1s
+
+  # Stay in fallback mode for at least this long before recovering
+  fallback_hold: 1s
+
+  # Wait this long before switching to a HIGHER quality profile
+  # Prevents oscillation when signal is borderline
+  hold_up: 3s
+
+  # Wait this long before switching to a LOWER quality profile
+  # 0 = immediate (recommended - don't delay when quality drops)
+  hold_down: 0s
+
+  # Minimum time between any profile changes
+  min_between_changes: 200ms
+
+  # ---------------------------------------------------------------------------
+  # Smoothing and Hysteresis
+  # ---------------------------------------------------------------------------
+
+  # Exponential moving average smoothing for score
+  # Lower value = smoother but slower response
+  # smoothing: new_score = old_score * (1 - factor) + raw_score * factor
+  smoothing: 0.1              # Slow response to improvements
+  smoothing_down: 1.0         # Instant response to degradation
+
+  # Hysteresis prevents oscillation at profile boundaries
+  # Score must exceed boundary by this percentage to trigger change
+  hysteresis: 5               # 5% hysteresis for upgrades
+  hysteresis_down: 5          # 5% hysteresis for downgrades
+
+  # ---------------------------------------------------------------------------
+  # Keyframe Control
+  # ---------------------------------------------------------------------------
+
+  # Allow GS to request keyframes (for video recovery after packet loss)
+  allow_keyframe: true
+
+  # Minimum interval between keyframe requests
+  keyframe_interval: 1112ms
+
+  # Request IDR/keyframe on every profile change
+  idr_on_change: false
+
+  # ---------------------------------------------------------------------------
+  # TX Dropped Handling
+  # ---------------------------------------------------------------------------
+
+  # Request keyframe when TX dropped counter increases
+  tx_drop_keyframe: true
+
+  # Reduce bitrate when TX dropped increases (radio can't keep up)
+  tx_drop_reduce_bitrate: true
+
+  # How often to check TX dropped counter
+  tx_drop_check_interval: 2250ms
+
+  # Bitrate reduction factor (multiply current by this)
+  tx_drop_bitrate_factor: 0.8
+
+  # ---------------------------------------------------------------------------
+  # Dynamic FEC
+  # ---------------------------------------------------------------------------
+
+  # Enable dynamic FEC adjustment based on packet loss
+  dynamic_fec: false
+
+  # Adjust FEC K (true) or N (false)
+  fec_k_adjust: true
+
+  # Only enable dynamic FEC when bitrate >= 4000 kbps
+  spike_fix: false
+
+  # ---------------------------------------------------------------------------
+  # Power Control
+  # ---------------------------------------------------------------------------
+
+  # Maximum power level 0-4 (overrides profile power)
+  # max_power_level: 4
+
+  # ---------------------------------------------------------------------------
+  # Video Encoder Commands
+  # ---------------------------------------------------------------------------
+  # Shell commands executed when parameters change
+  # {} is replaced with the new value
+  # These should communicate with your video encoder
+
+  commands:
+    # Request IDR/keyframe (for fast video recovery after packet loss)
+    keyframe: "curl -s http://127.0.0.1:8080/api/idr"
+
+    # Set video bitrate in kbps
+    bitrate: "curl -s 'http://127.0.0.1:8080/api/bitrate?value={}'"
+
+    # Set FEC parameters (k n)
+    # fec: "echo {} > /tmp/fec.txt"
+
+    # Set MCS index
+    # mcs: "iw dev wlan0 set bitrates ht-mcs-5 {}"
+
+    # Set TX power
+    # power: "/usr/bin/set-power.sh {}"
+
+    # Set GOP length in seconds
+    # gop: "curl -s 'http://127.0.0.1:8080/api/gop?value={}'"
+
+    # Set FPS
+    # fps: "curl -s 'http://127.0.0.1:8080/api/fps?value={}'"
+
+    # Set ROI QP values
+    # roi: "curl -s 'http://127.0.0.1:8080/api/roi?qp={}'"
+
+    # Set QP delta
+    # qp_delta: "curl -s 'http://127.0.0.1:8080/api/qp_delta?value={}'"
+
+# =============================================================================
+# API - Status and control interfaces
+# =============================================================================
+api:
+  enabled: true
+
+  # MsgPack binary API for wfb_cli tool
+  stats_port: 8002
+
+  # JSON API for custom integrations
+  json_port: 8102
+
+  # Stats logging interval in ms
+  log_interval: 1000
+
+# =============================================================================
+# COMMON - Global settings
+# =============================================================================
+common:
+  # Enable verbose debug logging
+  debug: false
+
+  # Primary instance - sets radio channel (default: true)
+  # Set to false for secondary instances sharing the same radio
+  primary: true
+
+  # Radio MTU size (default: 1445)
+  # Used for MAVLink/tunnel packet aggregation
+  # Should be <= MAX_PAYLOAD_SIZE, don't change unless you know what you're doing
+  radio_mtu: 1445
+
+  # Tunnel packet aggregation timeout (seconds)
+  # Aggregate small packets if less than radio_mtu, but no longer than this
+  tunnel_agg_timeout: 0.005
+
+  # MAVLink packet aggregation timeout (seconds)
+  mavlink_agg_timeout: 0.1
+
+  # Stats logging interval (ms)
+  log_interval: 1000
+
+  # TX antenna selection RSSI hysteresis (dB)
+  # Switch TX antenna if RSSI difference exceeds this threshold
+  tx_sel_rssi_delta: 3
+
+  # UDP buffer sizes (increase if seeing drops under high load)
+  tx_rcv_buf_size: 2097152    # 2 MB - SO_RCVBUF for TX
+  rx_snd_buf_size: 2097152    # 2 MB - SO_SNDBUF for RX
+
+# =============================================================================
+# PATHS - System paths (optional)
+# =============================================================================
+# paths:
+#   conf_dir: /etc/wfb
+#   bin_dir: /usr/bin
+#   tmp_dir: /tmp
+#   log_dir: /var/log
