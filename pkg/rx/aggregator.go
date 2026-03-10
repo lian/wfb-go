@@ -140,6 +140,7 @@ var outputBufPool = sync.Pool{
 	},
 }
 
+
 // Aggregator handles session management, decryption, and FEC recovery.
 type Aggregator struct {
 	mu sync.Mutex
@@ -159,9 +160,10 @@ type Aggregator struct {
 	aead        *crypto.AEAD
 
 	// FEC
-	ring *Ring
-	fecK int
-	fecN int
+	ring       *Ring
+	fecK       int
+	fecN       int
+	decryptBuf []byte // reused buffer for decryption
 
 	// Output (async via channel to avoid blocking FEC path)
 	outputFn   OutputFunc
@@ -211,6 +213,7 @@ func NewAggregator(cfg AggregatorConfig) (*Aggregator, error) {
 		outputFn:     cfg.OutputFn,
 		fecK:         8,  // Will be updated by session packet
 		fecN:         12, // Will be updated by session packet
+		decryptBuf:   make([]byte, protocol.MAX_FEC_PAYLOAD),
 		antennaStats: make(map[uint32]*AntennaStats),
 		outputChan:   make(chan outputPacket, 256), // Buffered for non-blocking output
 		antStatsChan: make(chan RXInfo, 256),       // Buffered for non-blocking stats
@@ -530,10 +533,26 @@ func (a *Aggregator) processDataPacket(data []byte) error {
 		return err
 	}
 
-	// Extract block and fragment indices from nonce
+	// Decrypt BEFORE updating ring state. A corrupt packet with garbage blockIdx
+	// could poison lastKnown, causing all subsequent valid packets to be rejected
+	// as "too old". We must verify the packet is authentic before trusting its header.
+	nonceBytes := crypto.NonceFromUint64(blockHdr.DataNonce)
+	plaintext, err := a.aead.Open(a.decryptBuf[:0], nonceBytes[:], data[protocol.BLOCK_HDR_SIZE:], data[:protocol.BLOCK_HDR_SIZE])
+	if err != nil {
+		a.stats.packetsDecErr.Add(1)
+		return ErrDecryptFailed
+	}
+
+	// NOW it's safe to parse block/fragment indices - packet is authenticated
 	blockIdx, fragmentIdx := protocol.ParseDataNonce(blockHdr.DataNonce)
 
 	debugLog("DATA_RX block=0x%x frag=%d", blockIdx, fragmentIdx)
+
+	// Sanity check block index (matches wfb-ng)
+	if blockIdx > protocol.MAX_BLOCK_IDX {
+		a.stats.packetsBad.Add(1)
+		return ErrInvalidPacket
+	}
 
 	// Get ring slot for this block
 	ringIdx, evicted, valid := a.ring.GetBlockRingIdx(blockIdx)
@@ -548,7 +567,7 @@ func (a *Aggregator) processDataPacket(data []byte) error {
 		a.flushEvictedBlock(evictedIdx)
 	}
 
-	// Get fragment buffer for zero-copy decryption
+	// Get fragment buffer and copy decrypted data
 	fragBuf := a.ring.GetFragmentBuffer(ringIdx, fragmentIdx)
 	if fragBuf == nil {
 		// Already have this fragment (duplicate)
@@ -556,13 +575,8 @@ func (a *Aggregator) processDataPacket(data []byte) error {
 		return nil
 	}
 
-	// Decrypt directly into ring buffer (zero-copy)
-	nonceBytes := crypto.NonceFromUint64(blockHdr.DataNonce)
-	plaintext, err := a.aead.Open(fragBuf, nonceBytes[:], data[protocol.BLOCK_HDR_SIZE:], data[:protocol.BLOCK_HDR_SIZE])
-	if err != nil {
-		a.stats.packetsDecErr.Add(1)
-		return ErrDecryptFailed
-	}
+	// Copy authenticated plaintext into ring buffer
+	copy(fragBuf, plaintext)
 
 	a.stats.packetsData.Add(1)
 	a.stats.packetsUniq.Add(1) // Non-duplicate fragment successfully stored

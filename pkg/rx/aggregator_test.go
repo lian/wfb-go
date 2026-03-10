@@ -589,3 +589,82 @@ func TestAggregatorAntennaStatsNilInfo(t *testing.T) {
 		t.Errorf("len(AntennaStats) = %d, want 0", len(stats.AntennaStats))
 	}
 }
+
+// TestAggregatorCorruptPacketDoesNotPoisonRing verifies that a corrupt packet
+// with garbage blockIdx doesn't poison the ring's lastKnown value, which would
+// cause all subsequent valid packets to be rejected as "too old".
+func TestAggregatorCorruptPacketDoesNotPoisonRing(t *testing.T) {
+	droneKey, gsKey, _ := crypto.GenerateWFBKeys()
+	injector := tx.NewBufferInjector()
+	channelID := protocol.MakeChannelID(0x010203, 0)
+
+	transmitter, _ := tx.New(tx.Config{
+		FecK:      4,
+		FecN:      6,
+		Epoch:     1000,
+		ChannelID: channelID,
+		KeyData:   droneKey,
+	}, injector)
+
+	var received []string
+	var mu sync.Mutex
+
+	agg, _ := NewAggregator(AggregatorConfig{
+		KeyData:   gsKey,
+		Epoch:     0,
+		ChannelID: channelID,
+		OutputFn: func(data []byte) error {
+			mu.Lock()
+			received = append(received, string(data))
+			mu.Unlock()
+			return nil
+		},
+	})
+
+	// Establish session
+	transmitter.SendSessionKey()
+	agg.ProcessPacket(injector.Packets[0])
+	injector.Clear()
+
+	// Send first valid packet
+	transmitter.SendPacket([]byte("packet1"))
+	for _, pkt := range injector.Packets {
+		agg.ProcessPacket(pkt)
+	}
+	injector.Clear()
+
+	statsBefore := agg.Stats()
+
+	// Create a corrupt packet with garbage blockIdx in the header.
+	// Before the fix, this would poison lastKnown and break all subsequent packets.
+	corruptPkt := make([]byte, 100)
+	corruptPkt[0] = protocol.WFB_PACKET_DATA
+	corruptPkt[1] = 0xFF // Large garbage blockIdx
+	corruptPkt[2] = 0xFF
+
+	err := agg.ProcessPacket(corruptPkt)
+	if err != ErrDecryptFailed {
+		t.Errorf("Expected ErrDecryptFailed, got %v", err)
+	}
+
+	statsAfter := agg.Stats()
+	if statsAfter.PacketsDecErr != statsBefore.PacketsDecErr+1 {
+		t.Errorf("PacketsDecErr should increment")
+	}
+
+	// Send more valid packets - should still work after corrupt packet
+	transmitter.SendPacket([]byte("packet2"))
+	transmitter.SendPacket([]byte("packet3"))
+	for _, pkt := range injector.Packets {
+		agg.ProcessPacket(pkt)
+	}
+
+	agg.Flush()
+
+	mu.Lock()
+	defer mu.Unlock()
+
+	if len(received) != 3 {
+		t.Errorf("Expected 3 packets, got %d (corrupt packet poisoned ring)", len(received))
+	}
+}
