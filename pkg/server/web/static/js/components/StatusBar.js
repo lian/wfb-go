@@ -8,8 +8,10 @@ export default {
         stats: Object,
         bitrate: [Number, String],
         nalCount: Number,
+        pitMode: Object,
     },
-    setup(props) {
+    emits: ['toggle-pit-mode'],
+    setup(props, { emit }) {
         const rssiClass = computed(() => {
             const rssi = props.stats?.rssi;
             if (!rssi) return '';
@@ -26,10 +28,15 @@ export default {
             return errors === 0 ? 'good' : errors < 5 ? 'warn' : 'bad';
         });
 
+        function onTogglePitMode() {
+            emit('toggle-pit-mode');
+        }
+
         return {
             rssiClass,
             fecLostClass,
             decErrorsClass,
+            onTogglePitMode,
         };
     },
     template: `
@@ -76,6 +83,15 @@ export default {
                 <span class="stat-label">TX Dropped</span>
                 <span class="stat-value" :class="stats?.txDropped > 0 ? 'warn' : ''">{{ stats?.txDropped || 0 }}</span>
             </div>
+            <button
+                class="pit-mode-btn"
+                :class="{ active: pitMode?.enabled }"
+                @click="onTogglePitMode"
+                :disabled="pitMode?.loading"
+                :title="pitMode?.enabled ? 'Pit Mode Active - Click to disable' : 'Enable Pit Mode (reduce TX power)'"
+            >
+                {{ pitMode?.loading ? '...' : (pitMode?.enabled ? 'PIT ON' : 'PIT') }}
+            </button>
         </div>
     `
 };

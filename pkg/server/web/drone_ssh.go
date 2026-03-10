@@ -829,9 +829,10 @@ func (c *DroneSSHClient) SetConfig(changes map[string]interface{}) error {
 	}
 
 	// Restart services as needed
+	// Use nohup/setsid to ensure processes survive SSH session close
 	if restartWfb {
 		log.Printf("[drone-ssh] Restarting wfb-ng...")
-		c.runCommand(client, "(wifibroadcast stop; sleep 1; wifibroadcast start) >/dev/null 2>&1 &")
+		c.runCommand(client, "nohup sh -c 'wifibroadcast stop; sleep 1; wifibroadcast start' > /dev/null 2>&1 &")
 	}
 	if restartMajestic {
 		log.Printf("[drone-ssh] Reloading majestic...")
@@ -839,7 +840,7 @@ func (c *DroneSSHClient) SetConfig(changes map[string]interface{}) error {
 	}
 	if restartAlink {
 		log.Printf("[drone-ssh] Restarting alink_drone...")
-		c.runCommand(client, "killall -9 alink_drone; alink_drone &")
+		c.runCommand(client, "killall -9 alink_drone 2>/dev/null; sleep 0.5; nohup alink_drone > /dev/null 2>&1 &")
 	}
 
 	return nil

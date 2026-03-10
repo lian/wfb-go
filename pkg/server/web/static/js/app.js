@@ -34,6 +34,9 @@ const App = {
         const showPanels = ref(true);
         const rawStats = ref(null);
 
+        // Pit mode state
+        const pitMode = ref({ enabled: false, loading: false, error: null });
+
         // Provide rawStats for child components (e.g., StreamsTab needs streams_running)
         provide('stats', rawStats);
 
@@ -101,8 +104,53 @@ const App = {
             showPanels.value = !showPanels.value;
         }
 
+        // Fetch pit mode state
+        async function fetchPitMode() {
+            try {
+                const res = await fetch('/api/pitmode');
+                if (res.ok) {
+                    const data = await res.json();
+                    pitMode.value.enabled = data.enabled;
+                    pitMode.value.error = data.error || null;
+                }
+            } catch (e) {
+                console.error('Failed to fetch pit mode:', e);
+            }
+        }
+
+        // Toggle pit mode
+        async function togglePitMode() {
+            if (pitMode.value.loading) return;
+
+            const newState = !pitMode.value.enabled;
+            const confirmMsg = newState
+                ? 'Enable pit mode? This will reduce TX power to minimum on GS and drone.'
+                : 'Disable pit mode? This will restore normal TX power.';
+
+            if (!confirm(confirmMsg)) return;
+
+            pitMode.value.loading = true;
+            pitMode.value.error = null;
+
+            try {
+                const res = await fetch('/api/pitmode', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ enabled: newState })
+                });
+                const data = await res.json();
+                pitMode.value.enabled = data.enabled;
+                pitMode.value.error = data.error || null;
+            } catch (e) {
+                pitMode.value.error = e.message;
+            } finally {
+                pitMode.value.loading = false;
+            }
+        }
+
         onMounted(() => {
             connectStats();
+            fetchPitMode();
         });
 
         onUnmounted(() => {
@@ -120,13 +168,24 @@ const App = {
             txWlan,
             adaptiveLink,
             showPanels,
+            pitMode,
             onVideoConnected,
             onVideoDisconnected,
             togglePanels,
+            togglePitMode,
         };
     },
     template: `
         <div class="container">
+            <!-- Pit Mode Warning Banner -->
+            <div class="pit-mode-banner" v-if="pitMode.enabled">
+                <span class="pit-mode-icon">&#9888;</span>
+                <span>PIT MODE ACTIVE - TX power reduced to minimum</span>
+                <button class="pit-mode-exit" @click="togglePitMode" :disabled="pitMode.loading">
+                    {{ pitMode.loading ? 'Restoring...' : 'Exit Pit Mode' }}
+                </button>
+            </div>
+
             <VideoPlayer
                 :stats="stats"
                 @connected="onVideoConnected"
@@ -138,6 +197,8 @@ const App = {
                 :stats="stats"
                 :bitrate="bitrate"
                 :nalCount="nalCount"
+                :pitMode="pitMode"
+                @toggle-pit-mode="togglePitMode"
             />
 
             <div class="panels-toggle" @click="togglePanels">

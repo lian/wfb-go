@@ -48,6 +48,9 @@ type Server struct {
 
 	// HTTP client for drone proxy requests
 	httpClient *http.Client
+
+	// Pit mode state
+	pitMode *PitModeState
 }
 
 // Stats holds current link statistics.
@@ -187,6 +190,7 @@ func NewServer(cfg Config) *Server {
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
+		pitMode: NewPitModeState(),
 	}
 }
 
@@ -224,6 +228,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/drone/config", s.handleDroneConfigAPI)
 	mux.HandleFunc("/api/drone/streams", s.handleDroneStreamsAPI)
 	mux.HandleFunc("/api/drone/streams/", s.handleDroneStreamActionAPI)
+	mux.HandleFunc("/api/pitmode", s.handlePitModeAPI)
 
 	server := &http.Server{
 		Addr:    s.addr,
@@ -320,6 +325,16 @@ func (s *Server) SetStreamCallbacks(
 	s.getStreams = getter
 	s.startStream = starter
 	s.stopStream = stopper
+}
+
+// SetPitModeCallbacks sets the callbacks for GS TX power control.
+func (s *Server) SetPitModeCallbacks(getter func() int, setter func(int) error) {
+	s.pitMode.SetGSPowerCallbacks(getter, setter)
+}
+
+// IsPitModeEnabled returns whether pit mode is currently enabled.
+func (s *Server) IsPitModeEnabled() bool {
+	return s.pitMode.IsEnabled()
 }
 
 // handleStreamsAPI handles GET for streams list.

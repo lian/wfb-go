@@ -111,6 +111,78 @@
             color: #aaa;
         }
 
+        /* Pit Mode Button in Status Bar */
+        .pit-mode-btn {
+            padding: 6px 12px;
+            background: #1e2d4d;
+            border: 1px solid #333;
+            border-radius: 6px;
+            color: #888;
+            font-size: 11px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-left: auto;
+        }
+        .pit-mode-btn:hover {
+            background: #2a3f5f;
+            border-color: #444;
+            color: #aaa;
+        }
+        .pit-mode-btn.active {
+            background: #991b1b;
+            border-color: #b91c1c;
+            color: #fff;
+            animation: pit-btn-pulse 2s ease-in-out infinite;
+        }
+        @keyframes pit-btn-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.7; }
+        }
+        .pit-mode-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Pit Mode Warning Banner */
+        .pit-mode-banner {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 10px 20px;
+            background: linear-gradient(90deg, #991b1b 0%, #b91c1c 50%, #991b1b 100%);
+            border-radius: 8px;
+            color: #fff;
+            font-weight: bold;
+            font-size: 14px;
+            animation: pit-mode-pulse 2s ease-in-out infinite;
+        }
+        @keyframes pit-mode-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.85; }
+        }
+        .pit-mode-icon {
+            font-size: 18px;
+        }
+        .pit-mode-exit {
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.2);
+            border: 1px solid rgba(255, 255, 255, 0.4);
+            border-radius: 4px;
+            color: #fff;
+            font-size: 12px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .pit-mode-exit:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        .pit-mode-exit:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         /* Stats Panels */
         .stats-panels {
             display: grid;

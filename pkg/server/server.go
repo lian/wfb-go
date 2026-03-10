@@ -181,6 +181,9 @@ func (s *Server) Start() error {
 		// Set stream callbacks for web API
 		s.webServer.SetStreamCallbacks(s.getStreamsForWeb, s.startStreamByName, s.stopStreamByName)
 
+		// Set pit mode callbacks for TX power control
+		s.webServer.SetPitModeCallbacks(s.GetTXPower, s.SetTXPower)
+
 		// Start goroutine to drain video channel and send to web server
 		s.statsWg.Add(1)
 		go s.videoChannelDrainer()
@@ -520,6 +523,14 @@ func (s *Server) GetTXPower() int {
 		return s.wlanMgr.GetTXPower()
 	}
 	return 0
+}
+
+// SetTXPower sets TX power on all wlans in dBm.
+func (s *Server) SetTXPower(powerDbm int) error {
+	if s.wlanMgr != nil {
+		return s.wlanMgr.SetTXPower(powerDbm)
+	}
+	return nil
 }
 
 // applyTXProfile applies TX parameters from an adaptive link profile to all TX services.
