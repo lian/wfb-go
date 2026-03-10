@@ -520,12 +520,12 @@ func (m *LinkMonitor) buildMessage(
 	return msg
 }
 
-// sendMessage sends a length-prefixed message to the drone.
-// Wire format: 4-byte big-endian length + UTF-8 message.
+// sendMessage sends a message to the drone.
+// Wire format: 4-byte big-endian length prefix + UTF-8 text (compatible with alink_drone.c).
 func (m *LinkMonitor) sendMessage(msg string) error {
 	msgBytes := []byte(msg)
 
-	// Build packet: 4-byte length prefix + message
+	// Build packet: 4-byte length prefix (network byte order) + message
 	packet := make([]byte, 4+len(msgBytes))
 	binary.BigEndian.PutUint32(packet[0:4], uint32(len(msgBytes)))
 	copy(packet[4:], msgBytes)

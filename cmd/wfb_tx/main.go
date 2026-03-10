@@ -290,13 +290,12 @@ func run(cfg *Config) error {
 
 	log.Printf("Opened %d interface(s)", rawInj.InterfaceCount())
 
-	// Choose injector based on mirror mode
-	var injector tx.Injector
+	// Set mirror mode or start with first interface
 	if cfg.Mirror {
-		injector = tx.NewMirrorInjector(rawInj)
+		rawInj.SelectInterface(-1) // Mirror mode: inject on all interfaces
 		log.Printf("Mirror mode enabled: sending on all interfaces")
 	} else {
-		injector = rawInj
+		rawInj.SelectInterface(0) // Start with first interface
 	}
 
 	// Load key file
@@ -316,7 +315,7 @@ func run(cfg *Config) error {
 		KeyData:    keyData,
 	}
 
-	transmitter, err := tx.New(txCfg, injector)
+	transmitter, err := tx.New(txCfg, rawInj)
 	if err != nil {
 		return fmt.Errorf("failed to create transmitter: %w", err)
 	}

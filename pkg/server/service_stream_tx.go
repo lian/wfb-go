@@ -6,59 +6,64 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lian/wfb-go/pkg/wifi/radiotap"
 	"github.com/lian/wfb-go/pkg/server/mavlink"
 	"github.com/lian/wfb-go/pkg/server/util"
 	"github.com/lian/wfb-go/pkg/tx"
+	"github.com/lian/wfb-go/pkg/wifi/radiotap"
 )
 
 func (s *StreamService) startTX(ctx context.Context, channelID uint32) error {
-	for i, wlan := range s.cfg.Wlans {
-		rtHdr := &radiotap.TXHeader{
-			MCSIndex:  uint8(s.cfg.MCSIndex),
-			Bandwidth: uint8(s.cfg.Bandwidth),
-			ShortGI:   s.cfg.ShortGI,
-			STBC:      uint8(s.cfg.STBC),
-			LDPC:      s.cfg.LDPC != 0,
-			VHTMode:   s.cfg.Bandwidth > 20 || s.cfg.ForceVHT,
-		}
-
-		rawCfg := tx.RawSocketConfig{
-			Interfaces: []string{wlan},
-			ChannelID:  channelID,
-			Radiotap:   rtHdr,
-			UseQdisc:   s.cfg.UseQdisc,
-			Fwmark:     s.cfg.Fwmark,
-		}
-
-		injector, err := tx.NewRawSocketInjector(rawCfg)
-		if err != nil {
-			return err
-		}
-		s.injectors = append(s.injectors, injector)
-
-		txCfg := tx.Config{
-			FecK:       s.cfg.FecK,
-			FecN:       s.cfg.FecN,
-			Epoch:      s.cfg.Epoch,
-			ChannelID:  channelID,
-			FecDelay:   time.Duration(s.cfg.FecDelay) * time.Microsecond,
-			FecTimeout: time.Duration(s.cfg.FecTimeout) * time.Millisecond,
-			KeyData:    s.cfg.KeyData,
-		}
-
-		transmitter, err := tx.New(txCfg, injector)
-		if err != nil {
-			injector.Close()
-			return err
-		}
-		s.transmitters = append(s.transmitters, transmitter)
-		log.Printf("[%s] TX[%d] on %s", s.name, i, wlan)
+	// All interfaces share one session key and FEC state
+	rtHdr := &radiotap.TXHeader{
+		MCSIndex:  uint8(s.cfg.MCSIndex),
+		Bandwidth: uint8(s.cfg.Bandwidth),
+		ShortGI:   s.cfg.ShortGI,
+		STBC:      uint8(s.cfg.STBC),
+		LDPC:      s.cfg.LDPC != 0,
+		VHTMode:   s.cfg.Bandwidth > 20 || s.cfg.ForceVHT,
 	}
 
-	// Log mirror mode status
+	rawCfg := tx.RawSocketConfig{
+		Interfaces: s.cfg.Wlans, // ALL interfaces in one injector
+		ChannelID:  channelID,
+		Radiotap:   rtHdr,
+		UseQdisc:   s.cfg.UseQdisc,
+		Fwmark:     s.cfg.Fwmark,
+	}
+
+	injector, err := tx.NewRawSocketInjector(rawCfg)
+	if err != nil {
+		return err
+	}
+	s.injector = injector
+
+	// Set mirror mode (-1) or start with first interface (0)
 	if s.cfg.Mirror {
-		log.Printf("[%s] Mirror mode enabled - packets sent to ALL %d antennas", s.name, len(s.transmitters))
+		injector.SelectInterface(-1) // Mirror mode: inject on all interfaces
+		log.Printf("[%s] Mirror mode enabled - packets sent to ALL %d interfaces", s.name, len(s.cfg.Wlans))
+	} else {
+		injector.SelectInterface(0) // Start with first interface
+	}
+
+	txCfg := tx.Config{
+		FecK:       s.cfg.FecK,
+		FecN:       s.cfg.FecN,
+		Epoch:      s.cfg.Epoch,
+		ChannelID:  channelID,
+		FecDelay:   time.Duration(s.cfg.FecDelay) * time.Microsecond,
+		FecTimeout: time.Duration(s.cfg.FecTimeout) * time.Millisecond,
+		KeyData:    s.cfg.KeyData,
+	}
+
+	transmitter, err := tx.New(txCfg, injector)
+	if err != nil {
+		injector.Close()
+		return err
+	}
+	s.transmitter = transmitter
+
+	for i, wlan := range s.cfg.Wlans {
+		log.Printf("[%s] TX[%d] on %s", s.name, i, wlan)
 	}
 
 	// Create packet aggregator if aggregation is enabled
@@ -182,9 +187,8 @@ func (s *StreamService) readFromPeer(buf []byte) (int, error) {
 	}
 }
 
-// sendToTX sends a packet to the appropriate TX antenna(s).
-// In mirror mode, sends to ALL antennas for redundancy.
-// Otherwise, sends to the currently selected antenna.
+// sendToTX sends a packet to the transmitter.
+// The injector handles mirror mode internally based on SelectInterface setting.
 func (s *StreamService) sendToTX(data []byte) {
 	// Reset TX activity semaphore (for keepalive logic)
 	atomic.StoreInt32(&s.pktOutSem, 1)
@@ -194,33 +198,27 @@ func (s *StreamService) sendToTX(data []byte) {
 	s.stats.BytesIncoming += uint64(len(data))
 	s.stats.mu.Unlock()
 
-	if s.cfg.Mirror {
-		// Mirror mode: send to ALL antennas
-		for _, t := range s.transmitters {
-			if _, err := t.SendPacket(data); err != nil {
-				s.stats.mu.Lock()
-				s.stats.PacketsDropped++
-				s.stats.mu.Unlock()
-			}
-		}
-	} else {
-		// Normal mode: send to selected antenna
-		txIdx := atomic.LoadInt32(&s.currentTX)
-		if int(txIdx) < len(s.transmitters) {
-			if _, err := s.transmitters[txIdx].SendPacket(data); err != nil {
-				s.stats.mu.Lock()
-				s.stats.PacketsDropped++
-				s.stats.mu.Unlock()
-			}
+	if s.transmitter != nil {
+		if _, err := s.transmitter.SendPacket(data); err != nil {
+			s.stats.mu.Lock()
+			s.stats.PacketsDropped++
+			s.stats.mu.Unlock()
 		}
 	}
 }
 
-// sendToAllTX sends a packet to ALL TX antennas (for keepalive broadcast).
+// sendToAllTX sends a packet to ALL TX interfaces (for keepalive broadcast).
+// Temporarily switches to mirror mode, sends, then restores previous mode.
 func (s *StreamService) sendToAllTX(data []byte) {
-	for _, t := range s.transmitters {
-		t.SendPacket(data)
+	if s.transmitter == nil || s.injector == nil {
+		return
 	}
+
+	// Save current interface, switch to mirror mode, send, restore
+	currentIdx := s.injector.CurrentInterface()
+	s.injector.SelectInterface(-1) // Mirror mode
+	s.transmitter.SendPacket(data)
+	s.injector.SelectInterface(currentIdx) // Restore
 }
 
 func (s *StreamService) sessionLoop(ctx context.Context) {
@@ -236,8 +234,8 @@ func (s *StreamService) sessionLoop(ctx context.Context) {
 		case <-s.stopCh:
 			return
 		case <-ticker.C:
-			for _, t := range s.transmitters {
-				t.SendSessionKey()
+			if s.transmitter != nil {
+				s.transmitter.SendSessionKey()
 			}
 		}
 	}

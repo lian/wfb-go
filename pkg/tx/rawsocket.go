@@ -163,6 +163,7 @@ func openRawSocket(ifname string, bypassQdisc bool, fwmark uint32) (int, int, er
 }
 
 // Inject sends a WFB packet (without radiotap/802.11 headers).
+// If currentWlan is -1 (mirror mode), sends on all interfaces.
 func (r *RawSocketInjector) Inject(data []byte) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -185,8 +186,17 @@ func (r *RawSocketInjector) Inject(data []byte) error {
 	copy(frame[len(rtHdr):], ieee80211Bytes)
 	copy(frame[len(rtHdr)+len(ieee80211Bytes):], data)
 
-	// Inject on current interface with latency tracking
-	wlanIdx := r.currentWlan
+	// Mirror mode: inject on all interfaces
+	if r.currentWlan < 0 {
+		return r.injectAllLocked(frame)
+	}
+
+	// Single interface mode
+	return r.injectOneLocked(frame, r.currentWlan)
+}
+
+// injectOneLocked injects on a single interface (must hold lock).
+func (r *RawSocketInjector) injectOneLocked(frame []byte, wlanIdx int) error {
 	fd := r.sockfds[wlanIdx]
 
 	startTime := time.Now()
@@ -232,14 +242,67 @@ func (r *RawSocketInjector) Inject(data []byte) error {
 	return err
 }
 
+// injectAllLocked injects on all interfaces (mirror mode, must hold lock).
+func (r *RawSocketInjector) injectAllLocked(frame []byte) error {
+	var lastErr error
+	for wlanIdx, fd := range r.sockfds {
+		startTime := time.Now()
+		var err error
+		for i := 0; i < r.retries; i++ {
+			_, err = syscall.Write(fd, frame)
+			if err == nil {
+				break
+			}
+			if errors.Is(err, syscall.ENOBUFS) {
+				time.Sleep(r.retryDelay)
+				continue
+			}
+			break
+		}
+
+		// Record latency stats
+		latencyUs := uint64(time.Since(startTime).Microseconds())
+		stats := &r.latencyStats[wlanIdx]
+
+		if err == nil {
+			stats.PacketsInjected++
+			if stats.PacketsInjected == 1 {
+				stats.LatencyMin = latencyUs
+				stats.LatencyMax = latencyUs
+			} else {
+				if latencyUs < stats.LatencyMin {
+					stats.LatencyMin = latencyUs
+				}
+				if latencyUs > stats.LatencyMax {
+					stats.LatencyMax = latencyUs
+				}
+			}
+			stats.LatencySum += latencyUs
+		} else {
+			stats.PacketsDropped++
+			lastErr = err
+		}
+	}
+	return lastErr
+}
+
 // SelectInterface selects which interface to use for injection.
+// Use idx=-1 for mirror mode (inject on all interfaces).
 func (r *RawSocketInjector) SelectInterface(idx int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	if idx >= 0 && idx < len(r.sockfds) {
+	if idx >= -1 && idx < len(r.sockfds) {
 		r.currentWlan = idx
 	}
+}
+
+// CurrentInterface returns the currently selected interface index.
+// Returns -1 if in mirror mode.
+func (r *RawSocketInjector) CurrentInterface() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.currentWlan
 }
 
 // SetRadiotap updates the radiotap header settings.
@@ -308,55 +371,3 @@ func (r *RawSocketInjector) GetLatencyStatsNoReset() []LatencyStats {
 	return result
 }
 
-// MirrorInjector wraps an injector to send packets on all interfaces.
-type MirrorInjector struct {
-	raw *RawSocketInjector
-}
-
-// NewMirrorInjector creates an injector that sends on all interfaces.
-func NewMirrorInjector(raw *RawSocketInjector) *MirrorInjector {
-	return &MirrorInjector{raw: raw}
-}
-
-// Inject sends the packet on all interfaces.
-func (m *MirrorInjector) Inject(data []byte) error {
-	m.raw.mu.Lock()
-	defer m.raw.mu.Unlock()
-
-	if len(m.raw.sockfds) == 0 {
-		return ErrNoInjector
-	}
-
-	// Build radiotap header
-	rtHdr := m.raw.radiotapHdr.Build()
-
-	// Update 802.11 sequence number
-	m.raw.seq++
-	m.raw.ieee80211Hdr.SetSequence(m.raw.seq, 0) // seq, frag=0
-	ieee80211Bytes := m.raw.ieee80211Hdr.Marshal()
-
-	// Build complete frame
-	frame := make([]byte, len(rtHdr)+len(ieee80211Bytes)+len(data))
-	copy(frame[0:], rtHdr)
-	copy(frame[len(rtHdr):], ieee80211Bytes)
-	copy(frame[len(rtHdr)+len(ieee80211Bytes):], data)
-
-	// Send on all interfaces
-	var lastErr error
-	for _, fd := range m.raw.sockfds {
-		for i := 0; i < m.raw.retries; i++ {
-			_, err := syscall.Write(fd, frame)
-			if err == nil {
-				break
-			}
-			if errors.Is(err, syscall.ENOBUFS) {
-				time.Sleep(m.raw.retryDelay)
-				continue
-			}
-			lastErr = err
-			break
-		}
-	}
-
-	return lastErr
-}

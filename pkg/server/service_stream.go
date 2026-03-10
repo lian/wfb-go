@@ -28,10 +28,9 @@ type StreamService struct {
 	name string
 	cfg  *ServiceConfig
 
-	// TX components (one per wlan for antenna selection)
-	transmitters []*tx.Transmitter
-	injectors    []*tx.RawSocketInjector
-	currentTX    int32 // atomic
+	// TX components - session key and FEC state shared across all interfaces
+	transmitter *tx.Transmitter
+	injector    *tx.RawSocketInjector
 
 	// RX component
 	forwarder *rx.Forwarder
@@ -285,16 +284,16 @@ func (s *StreamService) SetAntenna(wlanIdx uint8) {
 	if s.cfg.Mirror {
 		return // Mirror mode ignores antenna selection
 	}
-	if int(wlanIdx) < len(s.transmitters) {
-		atomic.StoreInt32(&s.currentTX, int32(wlanIdx))
+	if s.injector != nil {
+		s.injector.SelectInterface(int(wlanIdx))
 	}
 }
 
 // SetTXParams updates TX parameters dynamically (for adaptive link).
 func (s *StreamService) SetTXParams(params TXParams) {
-	// Update radiotap headers on all injectors
-	for _, inj := range s.injectors {
-		hdr := inj.GetRadiotap()
+	// Update radiotap header on injector
+	if s.injector != nil {
+		hdr := s.injector.GetRadiotap()
 		hdr.MCSIndex = uint8(params.MCS)
 		hdr.ShortGI = params.ShortGI
 		hdr.STBC = uint8(params.STBC)
@@ -304,15 +303,13 @@ func (s *StreamService) SetTXParams(params TXParams) {
 		}
 		// VHT mode is typically needed for bandwidth > 20 or higher MCS
 		hdr.VHTMode = params.Bandwidth > 20 || params.MCS > 7
-		inj.SetRadiotap(hdr)
+		s.injector.SetRadiotap(hdr)
 	}
 
-	// Update FEC on all transmitters
-	if params.FecK > 0 && params.FecN > 0 {
-		for _, t := range s.transmitters {
-			if err := t.SetFEC(params.FecK, params.FecN); err != nil {
-				log.Printf("[%s] SetFEC failed: %v", s.name, err)
-			}
+	// Update FEC on transmitter
+	if params.FecK > 0 && params.FecN > 0 && s.transmitter != nil {
+		if err := s.transmitter.SetFEC(params.FecK, params.FecN); err != nil {
+			log.Printf("[%s] SetFEC failed: %v", s.name, err)
 		}
 	}
 
@@ -326,14 +323,14 @@ func (s *StreamService) SetTXParams(params TXParams) {
 // GetTXParams returns current TX parameters.
 func (s *StreamService) GetTXParams() TXParams {
 	params := TXParams{}
-	if len(s.injectors) > 0 {
-		hdr := s.injectors[0].GetRadiotap()
+	if s.injector != nil {
+		hdr := s.injector.GetRadiotap()
 		params.MCS = int(hdr.MCSIndex)
 		params.ShortGI = hdr.ShortGI
 		params.Bandwidth = int(hdr.Bandwidth)
 	}
-	if len(s.transmitters) > 0 {
-		params.FecK, params.FecN = s.transmitters[0].FEC()
+	if s.transmitter != nil {
+		params.FecK, params.FecN = s.transmitter.FEC()
 	}
 	return params
 }
@@ -428,11 +425,11 @@ func (s *StreamService) cleanup() {
 	if s.serialFd > 0 {
 		syscall.Close(s.serialFd)
 	}
-	for _, t := range s.transmitters {
-		t.Close()
+	if s.transmitter != nil {
+		s.transmitter.Close()
 	}
-	for _, inj := range s.injectors {
-		inj.Close()
+	if s.injector != nil {
+		s.injector.Close()
 	}
 	if s.forwarder != nil {
 		s.forwarder.Close()
@@ -503,19 +500,13 @@ func (s *StreamService) Stats() *ServiceStats {
 		s.stats.mu.Unlock()
 	}
 
-	var injected, bytes, fecTimeouts uint64
-	for _, t := range s.transmitters {
-		st := t.Stats()
-		injected += st.PacketsInjected
-		bytes += st.BytesInjected
-		fecTimeouts += st.FECTimeouts
-	}
 	s.stats.mu.Lock()
-	s.stats.PacketsInjected = injected
-	s.stats.BytesInjected = bytes
-	s.stats.FECTimeouts = fecTimeouts
-	// Set TX params from config for TX services
-	if len(s.transmitters) > 0 {
+	if s.transmitter != nil {
+		st := s.transmitter.Stats()
+		s.stats.PacketsInjected = st.PacketsInjected
+		s.stats.BytesInjected = st.BytesInjected
+		s.stats.FECTimeouts = st.FECTimeouts
+		// Set TX params from config for TX services
 		s.stats.SessionFecK = s.cfg.FecK
 		s.stats.SessionFecN = s.cfg.FecN
 		s.stats.SessionMCS = s.cfg.MCSIndex
@@ -528,23 +519,24 @@ func (s *StreamService) Stats() *ServiceStats {
 // GetLatencyStats returns injection latency stats per wlan.
 func (s *StreamService) GetLatencyStats() map[uint32]LatencyStatsData {
 	result := make(map[uint32]LatencyStatsData)
-	for i, inj := range s.injectors {
-		stats := inj.GetLatencyStatsNoReset()
-		if len(stats) > 0 {
-			st := stats[0]
-			// Key is (wlan_idx << 8) | 0xff (antenna 0xff means aggregate)
-			key := uint32(i)<<8 | 0xff
-			var avg uint64
-			if st.PacketsInjected+st.PacketsDropped > 0 {
-				avg = st.LatencySum / (st.PacketsInjected + st.PacketsDropped)
-			}
-			result[key] = LatencyStatsData{
-				PacketsInjected: st.PacketsInjected,
-				PacketsDropped:  st.PacketsDropped,
-				LatencyMin:      st.LatencyMin,
-				LatencyMax:      st.LatencyMax,
-				LatencyAvg:      avg,
-			}
+	if s.injector == nil {
+		return result
+	}
+
+	stats := s.injector.GetLatencyStatsNoReset()
+	for i, st := range stats {
+		// Key is (wlan_idx << 8) | 0xff (antenna 0xff means aggregate)
+		key := uint32(i)<<8 | 0xff
+		var avg uint64
+		if st.PacketsInjected+st.PacketsDropped > 0 {
+			avg = st.LatencySum / (st.PacketsInjected + st.PacketsDropped)
+		}
+		result[key] = LatencyStatsData{
+			PacketsInjected: st.PacketsInjected,
+			PacketsDropped:  st.PacketsDropped,
+			LatencyMin:      st.LatencyMin,
+			LatencyMax:      st.LatencyMax,
+			LatencyAvg:      avg,
 		}
 	}
 	return result
