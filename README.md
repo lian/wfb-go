@@ -9,7 +9,7 @@ wfb-go is a ground-up rewrite of wfb-ng in Go. It provides the same core functio
 **Current Status:** wfb-go is primarily tested on the ground station side, with the VTX (drone) running the default OpenIPC firmware wfb-ng. The wire protocol is fully compatible, so you can use wfb-go GS with a standard OpenIPC drone setup out of the box.
 
 > :warning: **Warranty/Disclaimer**
-> This is free software and comes with no warranty, as stated in the MIT license. The creators and contributors of the software are not responsible for how it is used. See [LICENSE](LICENSE) for details.
+> This is free software and comes with no warranty, as stated in the license. The creators and contributors of the software are not responsible for how it is used. See [LICENSE](LICENSE) for details.
 
 The project implements:
 - **1:1 mapping of UDP to IEEE 802.11 packets** - Minimum latency (no byte-stream serialization)
