@@ -27,6 +27,16 @@ export default {
             });
         });
 
+        // Get shared info from first antenna (freq/bw are same for all)
+        const sharedInfo = computed(() => {
+            if (!props.antennas || props.antennas.length === 0) return null;
+            const first = props.antennas[0];
+            return {
+                freq: formatFreq(first.freq),
+                bw: first.bandwidth ? `${first.bandwidth}MHz` : '--'
+            };
+        });
+
         function antennaLabel(ant) {
             const name = ant.wlan_name || `wlan${ant.wlan_idx}`;
             return `${name}:${ant.antenna}`;
@@ -47,42 +57,26 @@ export default {
             return freq >= 5000 ? `${(freq/1000).toFixed(1)}G` : `${freq}`;
         }
 
-        function bandwidthLabel(bw) {
-            return bw ? `${bw}MHz` : '--';
-        }
-
         return {
             hasAntennas,
             sortedAntennas,
+            sharedInfo,
             antennaLabel,
             rssiClass,
             snrClass,
-            formatFreq,
-            bandwidthLabel,
         };
     },
     template: `
         <div class="panel" v-if="hasAntennas">
             <div class="panel-title">
                 <span>Antennas ({{ sortedAntennas.length }})</span>
+                <span class="panel-subtitle" v-if="sharedInfo">{{ sharedInfo.freq }} / {{ sharedInfo.bw }}</span>
             </div>
             <div class="antenna-grid">
                 <div class="antenna-card" v-for="ant in sortedAntennas" :key="ant.wlan_idx + '-' + ant.antenna">
                     <div class="antenna-header">
                         <span>{{ antennaLabel(ant) }}</span>
                         <span class="tx-badge" v-if="txWlan === ant.wlan_idx">TX</span>
-                    </div>
-                    <div class="antenna-stat">
-                        <span>Freq</span>
-                        <span>{{ formatFreq(ant.freq) }}</span>
-                    </div>
-                    <div class="antenna-stat">
-                        <span>MCS</span>
-                        <span>{{ ant.mcs ?? '--' }}</span>
-                    </div>
-                    <div class="antenna-stat">
-                        <span>BW</span>
-                        <span>{{ bandwidthLabel(ant.bandwidth) }}</span>
                     </div>
                     <div class="antenna-stat">
                         <span>RSSI</span>
