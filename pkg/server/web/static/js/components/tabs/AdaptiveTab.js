@@ -44,6 +44,22 @@ export default {
                         </label>
                         <input type="number" v-model.number="config.adaptive.listen_port" min="1" max="65535">
                     </div>
+                    <!-- Drone: OSD Level -->
+                    <div class="config-field" v-if="activeDevice === 'drone'">
+                        <label>
+                            OSD Level
+                            <HelpTooltip :text="help.osd_level.text" :default-value="help.osd_level.default" :tuning="help.osd_level.tuning" />
+                        </label>
+                        <select v-model.number="config.adaptive.osd_level">
+                            <option :value="0">0 - Off</option>
+                            <option :value="1">1 - Minimal</option>
+                            <option :value="2">2 - Basic</option>
+                            <option :value="3">3 - Normal</option>
+                            <option :value="4">4 - All (One Line)</option>
+                            <option :value="5">5 - Extended</option>
+                            <option :value="6">6 - All (Multi Line)</option>
+                        </select>
+                    </div>
                 </div>
             </div>
 
@@ -140,6 +156,45 @@ export default {
 
             <!-- Drone: TX Settings -->
             <template v-if="activeDevice === 'drone' && config.adaptive.enabled">
+                <div class="config-subsection">
+                    <div class="config-subsection-title">Power Control</div>
+                    <div class="config-grid">
+                        <div class="config-field">
+                            <label>
+                                Allow TX Power Control
+                                <HelpTooltip :text="help.allow_set_power.text" :default-value="help.allow_set_power.default" :tuning="help.allow_set_power.tuning" />
+                            </label>
+                            <select v-model="config.adaptive.allow_set_power">
+                                <option :value="false">No</option>
+                                <option :value="true">Yes</option>
+                            </select>
+                        </div>
+                        <div class="config-field">
+                            <label :class="{ disabled: !config.adaptive.allow_set_power }">
+                                Use Card Power Tables
+                                <HelpTooltip :text="help.use_04_txpower.text" :default-value="help.use_04_txpower.default" :tuning="help.use_04_txpower.tuning" />
+                            </label>
+                            <select v-model="config.adaptive.use_04_txpower" :disabled="!config.adaptive.allow_set_power">
+                                <option :value="false">No</option>
+                                <option :value="true">Yes</option>
+                            </select>
+                        </div>
+                        <div class="config-field">
+                            <label :class="{ disabled: !config.adaptive.allow_set_power || !config.adaptive.use_04_txpower }">
+                                Power Level (0-4)
+                                <HelpTooltip :text="help.power_level_04.text" :default-value="help.power_level_04.default" :tuning="help.power_level_04.tuning" />
+                            </label>
+                            <select v-model.number="config.adaptive.power_level_04" :disabled="!config.adaptive.allow_set_power || !config.adaptive.use_04_txpower">
+                                <option :value="0">0 - Pit Mode (Lowest)</option>
+                                <option :value="1">1 - Low</option>
+                                <option :value="2">2 - Medium</option>
+                                <option :value="3">3 - High</option>
+                                <option :value="4">4 - Maximum</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="config-subsection">
                     <div class="config-subsection-title">Timing</div>
                     <div class="config-grid">
@@ -318,6 +373,42 @@ export default {
                                 <HelpTooltip :text="help.fec_k_adjust.text" :default-value="help.fec_k_adjust.default" :tuning="help.fec_k_adjust.tuning" />
                             </label>
                             <select v-model="config.adaptive.fec_k_adjust">
+                                <option :value="false">No</option>
+                                <option :value="true">Yes</option>
+                            </select>
+                        </div>
+                        <div class="config-field">
+                            <label>
+                                Spike Fix (Low Bitrate)
+                                <HelpTooltip :text="help.spike_fix.text" :default-value="help.spike_fix.default" :tuning="help.spike_fix.tuning" />
+                            </label>
+                            <select v-model="config.adaptive.spike_fix">
+                                <option :value="false">No</option>
+                                <option :value="true">Yes</option>
+                            </select>
+                        </div>
+                        <div class="config-field">
+                            <label>
+                                Allow FPS Reduction
+                                <HelpTooltip :text="help.allow_spike_fps.text" :default-value="help.allow_spike_fps.default" :tuning="help.allow_spike_fps.tuning" />
+                            </label>
+                            <select v-model="config.adaptive.allow_spike_fps">
+                                <option :value="false">No</option>
+                                <option :value="true">Yes</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="config-subsection">
+                    <div class="config-subsection-title">Video Quality</div>
+                    <div class="config-grid">
+                        <div class="config-field">
+                            <label>
+                                ROI Focus Mode
+                                <HelpTooltip :text="help.roi_focus_mode.text" :default-value="help.roi_focus_mode.default" :tuning="help.roi_focus_mode.tuning" />
+                            </label>
+                            <select v-model="config.adaptive.roi_focus_mode">
                                 <option :value="false">No</option>
                                 <option :value="true">Yes</option>
                             </select>

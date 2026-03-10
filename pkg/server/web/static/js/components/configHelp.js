@@ -338,6 +338,45 @@ export const HELP = {
         default: 'No',
         tuning: 'Enable for more adaptation options.'
     },
+    spike_fix: {
+        text: 'Disable dynamic FEC when bitrate is low (≤4000 kbps). Prevents FEC overhead from consuming too much of limited bandwidth.',
+        default: 'No',
+        tuning: 'Enable if using low bitrate profiles to ensure bandwidth is used for video data.'
+    },
+    allow_spike_fps: {
+        text: 'Allow reducing FPS during bitrate spikes to help the encoder cope. Temporarily lowers frame rate on high resolution streams.',
+        default: 'No',
+        tuning: 'Enable for high-resolution streams (1080p+) where encoder may struggle with bitrate limits.'
+    },
+
+    // Adaptive Link - Power Control
+    allow_set_power: {
+        text: 'Enable adaptive TX power control. Allows the system to adjust transmit power based on link conditions and profile settings.',
+        default: 'Yes',
+        tuning: 'Enable for power-efficient operation. Disable if you want fixed TX power.'
+    },
+    use_04_txpower: {
+        text: 'Use card-specific power tables for accurate TX power control. Loads power calibration data from wfb.yaml based on your WiFi card model.',
+        default: 'Yes',
+        tuning: 'Enable for cards with power tables defined. Uses 0-4 power scale that maps to actual driver values per MCS rate.'
+    },
+    power_level_04: {
+        text: 'TX power level on 0-4 scale. 0 = pit mode (minimum power for bench testing), 4 = maximum power. The actual driver power depends on MCS rate and card-specific tables.',
+        default: '0',
+        tuning: '0 for bench/pit, 2-3 for normal flying, 4 for long range. Power scales with MCS for optimal efficiency.'
+    },
+
+    // Adaptive Link - Video Quality
+    roi_focus_mode: {
+        text: 'Region of Interest focus mode. Allocates more bitrate to the center of the image for higher quality where pilots typically look.',
+        default: 'No',
+        tuning: 'Enable for FPV flying. The center gets higher quality while edges are slightly compressed.'
+    },
+    osd_level: {
+        text: 'On-Screen Display verbosity level. Controls how much adaptive link information is shown on the video OSD.',
+        default: '0 (Off)',
+        tuning: '0=off, 1-3=increasing detail, 4=all on one line, 5-6=extended multi-line display.'
+    },
 
     // Adaptive Link - Profiles
     profiles: {

@@ -172,10 +172,20 @@ type AdaptiveConfig struct {
 	// === Dynamic FEC ===
 	DynamicFEC bool `yaml:"dynamic_fec,omitempty" json:"dynamic_fec,omitempty"`
 	FECKAdjust bool `yaml:"fec_k_adjust,omitempty" json:"fec_k_adjust,omitempty"`
-	SpikeFix   bool `yaml:"spike_fix,omitempty" json:"spike_fix,omitempty"`
+	SpikeFix   bool `yaml:"spike_fix,omitempty" json:"spike_fix,omitempty"` // Disable dynamic FEC at low bitrate
+
+	// === Spike Recovery ===
+	AllowSpikeFPS bool `yaml:"allow_spike_fps,omitempty" json:"allow_spike_fps,omitempty"` // Allow FPS reduction on bitrate spikes
 
 	// === Power ===
-	MaxPowerLevel *int `yaml:"max_power_level,omitempty" json:"max_power_level,omitempty"` // 0-4 scale
+	AllowSetPower bool `yaml:"allow_set_power,omitempty" json:"allow_set_power,omitempty"` // Enable TX power control
+	Use04TXPower  bool `yaml:"use_04_txpower,omitempty" json:"use_04_txpower,omitempty"`   // Use card power tables
+	PowerLevel04  *int `yaml:"power_level_04,omitempty" json:"power_level_04,omitempty"`   // Power level 0-4 scale
+	MaxPowerLevel *int `yaml:"max_power_level,omitempty" json:"max_power_level,omitempty"` // Legacy: 0-4 scale
+
+	// === Video Quality ===
+	ROIFocusMode bool `yaml:"roi_focus_mode,omitempty" json:"roi_focus_mode,omitempty"` // Higher quality in center of image
+	OSDLevel     *int `yaml:"osd_level,omitempty" json:"osd_level,omitempty"`           // OSD verbosity (0-6)
 
 	// === Commands ===
 	Commands *AdaptiveCommands `yaml:"commands,omitempty" json:"commands,omitempty"`

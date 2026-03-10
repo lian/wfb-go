@@ -821,6 +821,9 @@
             align-items: center;
             height: 14px;
         }
+        .config-field label.disabled {
+            opacity: 0.5;
+        }
         .config-field input,
         .config-field select {
             padding: 8px 10px;
@@ -843,6 +846,11 @@
             background-position: right 10px center;
             padding-right: 30px;
             cursor: pointer;
+        }
+        .config-field select:disabled,
+        .config-field input:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
         }
         .config-field select option {
             background: #16213e;

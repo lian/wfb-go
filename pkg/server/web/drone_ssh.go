@@ -100,6 +100,7 @@ type WfbWireless struct {
 	Width   int    `yaml:"width" json:"bandwidth"`
 	TXPower int    `yaml:"txpower" json:"tx_power"`
 	Region  string `yaml:"region,omitempty" json:"region,omitempty"`
+	Regdom  string `yaml:"regdom,omitempty" json:"-"` // Alternative name for region
 }
 
 type WfbBroadcast struct {
@@ -109,6 +110,7 @@ type WfbBroadcast struct {
 	ShortGI  bool `yaml:"short_gi" json:"short_gi"`
 	FecK     int  `yaml:"fec_k" json:"fec_k"`
 	FecN     int  `yaml:"fec_n" json:"fec_n"`
+	LinkID   int  `yaml:"link_id" json:"link_id"`
 }
 
 type WfbTelemetry struct {
@@ -149,8 +151,9 @@ type DroneConfigSSH struct {
 
 // DroneLinkConfig holds link/encryption settings.
 type DroneLinkConfig struct {
-	Domain string `json:"domain,omitempty"`
-	Key    string `json:"key,omitempty"` // Key file path
+	Domain    string `json:"domain,omitempty"`
+	ID        int    `json:"id,omitempty"`         // Link ID from broadcast.link_id
+	KeyBase64 string `json:"key_base64,omitempty"` // Key in base64 format
 }
 
 // DroneCameraConfig holds camera (majestic) settings.
@@ -169,7 +172,7 @@ type DroneCameraConfig struct {
 // DroneAdaptiveConfig holds adaptive link settings.
 // Field names and units match the GS adaptive config for UI compatibility.
 type DroneAdaptiveConfig struct {
-	Enabled   bool `json:"enabled"`
+	Enabled    bool `json:"enabled"`
 	ListenPort int  `json:"listen_port,omitempty"` // Default 9999
 	// Timing
 	FallbackTimeout   int64 `json:"fallback_timeout,omitempty"`    // nanoseconds (from fallback_ms)
@@ -186,13 +189,22 @@ type DroneAdaptiveConfig struct {
 	KeyframeInterval int64 `json:"keyframe_interval,omitempty"` // nanoseconds (from request_keyframe_interval_ms)
 	IDROnChange      bool  `json:"idr_on_change"`               // from idr_every_change
 	// TX drop recovery
-	TXDropKeyframe      bool    `json:"tx_drop_keyframe"`                // from allow_rq_kf_by_tx_d
-	TXDropReduceBitrate bool    `json:"tx_drop_reduce_bitrate"`          // from allow_xtx_reduce_bitrate
+	TXDropKeyframe      bool    `json:"tx_drop_keyframe"`                 // from allow_rq_kf_by_tx_d
+	TXDropReduceBitrate bool    `json:"tx_drop_reduce_bitrate"`           // from allow_xtx_reduce_bitrate
 	TXDropCheckInterval int64   `json:"tx_drop_check_interval,omitempty"` // nanoseconds (from check_xtx_period_ms)
 	TXDropBitrateFactor float64 `json:"tx_drop_bitrate_factor,omitempty"` // from xtx_reduce_bitrate_factor
 	// Dynamic FEC
-	DynamicFEC bool `json:"dynamic_fec"` // from allow_dynamic_fec
-	FECKAdjust bool `json:"fec_k_adjust"`
+	DynamicFEC    bool `json:"dynamic_fec"`     // from allow_dynamic_fec
+	FECKAdjust    bool `json:"fec_k_adjust"`    // from fec_k_adjust
+	SpikeFix      bool `json:"spike_fix"`       // from spike_fix_dynamic_fec - disable dynamic FEC at low bitrate
+	AllowSpikeFPS bool `json:"allow_spike_fps"` // from allow_spike_fix_fps - allow FPS reduction on spikes
+	// Power control
+	AllowSetPower    bool `json:"allow_set_power"`     // from allow_set_power - enable TX power control
+	Use04TXPower     bool `json:"use_04_txpower"`      // from use_0_to_4_txpower - use card power tables
+	PowerLevel04     *int `json:"power_level_04"`      // from power_level_0_to_4 - power level 0-4 scale
+	// Video quality
+	ROIFocusMode bool `json:"roi_focus_mode"` // from roi_focus_mode - higher quality in center
+	OSDLevel     *int `json:"osd_level"`      // from osd_level - OSD verbosity 0-6
 	// Profiles loaded from /etc/txprofiles.conf
 	Profiles []DroneAdaptiveProfile `json:"profiles,omitempty"`
 }
@@ -260,14 +272,17 @@ func (c *DroneSSHClient) GetConfig() (*DroneConfigSSH, error) {
 		txp := wfbCfg.Wireless.TXPower
 		cfg.Hardware.TXPower = &txp
 	}
+	// Region can be stored as "region" or "regdom" in wfb.yaml
 	cfg.Hardware.Region = wfbCfg.Wireless.Region
+	if cfg.Hardware.Region == "" {
+		cfg.Hardware.Region = wfbCfg.Wireless.Regdom
+	}
 
-	// Link settings
-	if wfbCfg.Link.Domain != "" || wfbCfg.Link.Key != "" {
-		cfg.Link = &DroneLinkConfig{
-			Domain: wfbCfg.Link.Domain,
-			Key:    wfbCfg.Link.Key,
-		}
+	// Link settings (from link section and broadcast.link_id)
+	cfg.Link = &DroneLinkConfig{
+		Domain:    wfbCfg.Link.Domain,
+		ID:        wfbCfg.Broadcast.LinkID,
+		KeyBase64: wfbCfg.Link.Key,
 	}
 
 	// Create a "video" stream with broadcast settings
@@ -459,6 +474,24 @@ func (c *DroneSSHClient) parseAdaptiveConfig(alinkConf, alinkStatus, profilesCon
 			adaptive.DynamicFEC = value == "1"
 		case "fec_k_adjust":
 			adaptive.FECKAdjust = value == "1"
+		case "spike_fix_dynamic_fec":
+			adaptive.SpikeFix = value == "1"
+		case "allow_spike_fix_fps":
+			adaptive.AllowSpikeFPS = value == "1"
+		// Power control
+		case "allow_set_power":
+			adaptive.AllowSetPower = value == "1"
+		case "use_0_to_4_txpower":
+			adaptive.Use04TXPower = value == "1"
+		case "power_level_0_to_4":
+			fmt.Sscanf(value, "%d", &intVal)
+			adaptive.PowerLevel04 = &intVal
+		// Video quality
+		case "roi_focus_mode":
+			adaptive.ROIFocusMode = value == "1"
+		case "osd_level":
+			fmt.Sscanf(value, "%d", &intVal)
+			adaptive.OSDLevel = &intVal
 		}
 	}
 
@@ -559,14 +592,23 @@ func (c *DroneSSHClient) SetConfig(changes map[string]interface{}) error {
 			wfbCommands = append(wfbCommands, fmt.Sprintf("wifibroadcast cli -s .wireless.txpower %v", txp))
 			restartWfb = true
 		}
+		if region, ok := hw["region"].(string); ok && region != "" {
+			wfbCommands = append(wfbCommands, fmt.Sprintf("wifibroadcast cli -s .wireless.region %v", region))
+			restartWfb = true
+		}
 	}
 
 	// Process link changes
 	if link, ok := changes["link"].(map[string]interface{}); ok {
-		if domain, ok := link["domain"].(string); ok && domain != "" {
+		if domain, ok := link["domain"].(string); ok {
 			wfbCommands = append(wfbCommands, fmt.Sprintf("wifibroadcast cli -s .link.link_domain %q", domain))
 			restartWfb = true
 		}
+		if id, ok := link["id"]; ok {
+			wfbCommands = append(wfbCommands, fmt.Sprintf("wifibroadcast cli -s .broadcast.link_id %v", toInt(id)))
+			restartWfb = true
+		}
+		// Note: key_base64 not supported via SSH - would need to write file on drone
 	}
 
 	// Process stream changes (apply to broadcast section)
@@ -716,6 +758,36 @@ func (c *DroneSSHClient) SetConfig(changes map[string]interface{}) error {
 		}
 		if v, ok := al["fec_k_adjust"]; ok {
 			alinkCommands = append(alinkCommands, fmt.Sprintf("sed -i 's/fec_k_adjust=.*/fec_k_adjust=%s/' /etc/alink.conf", boolToStr(v)))
+			restartAlink = true
+		}
+		if v, ok := al["spike_fix"]; ok {
+			alinkCommands = append(alinkCommands, fmt.Sprintf("sed -i 's/spike_fix_dynamic_fec=.*/spike_fix_dynamic_fec=%s/' /etc/alink.conf", boolToStr(v)))
+			restartAlink = true
+		}
+		if v, ok := al["allow_spike_fps"]; ok {
+			alinkCommands = append(alinkCommands, fmt.Sprintf("sed -i 's/allow_spike_fix_fps=.*/allow_spike_fix_fps=%s/' /etc/alink.conf", boolToStr(v)))
+			restartAlink = true
+		}
+		// Power control
+		if v, ok := al["allow_set_power"]; ok {
+			alinkCommands = append(alinkCommands, fmt.Sprintf("sed -i 's/allow_set_power=.*/allow_set_power=%s/' /etc/alink.conf", boolToStr(v)))
+			restartAlink = true
+		}
+		if v, ok := al["use_04_txpower"]; ok {
+			alinkCommands = append(alinkCommands, fmt.Sprintf("sed -i 's/use_0_to_4_txpower=.*/use_0_to_4_txpower=%s/' /etc/alink.conf", boolToStr(v)))
+			restartAlink = true
+		}
+		if v, ok := al["power_level_04"]; ok {
+			alinkCommands = append(alinkCommands, fmt.Sprintf("sed -i 's/power_level_0_to_4=.*/power_level_0_to_4=%v/' /etc/alink.conf", toInt(v)))
+			restartAlink = true
+		}
+		// Video quality
+		if v, ok := al["roi_focus_mode"]; ok {
+			alinkCommands = append(alinkCommands, fmt.Sprintf("sed -i 's/roi_focus_mode=.*/roi_focus_mode=%s/' /etc/alink.conf", boolToStr(v)))
+			restartAlink = true
+		}
+		if v, ok := al["osd_level"]; ok {
+			alinkCommands = append(alinkCommands, fmt.Sprintf("sed -i 's/osd_level=.*/osd_level=%v/' /etc/alink.conf", toInt(v)))
 			restartAlink = true
 		}
 		// Profiles

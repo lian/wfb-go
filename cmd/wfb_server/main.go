@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"os/signal"
 	"strings"
 	"syscall"
@@ -116,6 +117,9 @@ func main() {
 			capMode = rx.CaptureModeDedicated
 		}
 	}
+
+	// Ensure tun module is loaded (needed for tunnel service)
+	ensureTunModule()
 
 	log.Printf("wfb_server starting...")
 	log.Printf("  Config: %s", configFile)
@@ -230,5 +234,19 @@ func statsReporter(srv *server.Server, logInterval int, stopCh chan struct{}) {
 				}
 			}
 		}
+	}
+}
+
+// ensureTunModule loads the tun kernel module if not already loaded.
+func ensureTunModule() {
+	// Check if /dev/net/tun exists
+	if _, err := os.Stat("/dev/net/tun"); err == nil {
+		return // Already loaded
+	}
+
+	// Try to load the module
+	cmd := exec.Command("modprobe", "tun")
+	if err := cmd.Run(); err != nil {
+		log.Printf("Warning: failed to load tun module: %v (tunnel service may not work)", err)
 	}
 }
