@@ -54,7 +54,7 @@ export default {
 
         function formatFreq(freq) {
             if (!freq) return '--';
-            return freq >= 5000 ? `${(freq/1000).toFixed(1)}G` : `${freq}`;
+            return `${freq}`;
         }
 
         return {
@@ -70,7 +70,7 @@ export default {
         <div class="panel" v-if="hasAntennas">
             <div class="panel-title">
                 <span>Antennas ({{ sortedAntennas.length }})</span>
-                <span class="panel-subtitle" v-if="sharedInfo">{{ sharedInfo.freq }} / {{ sharedInfo.bw }}</span>
+                <span class="panel-subtitle" v-if="sharedInfo">Freq: {{ sharedInfo.freq }} / {{ sharedInfo.bw }}</span>
             </div>
             <div class="antenna-grid">
                 <div class="antenna-card" v-for="ant in sortedAntennas" :key="ant.wlan_idx + '-' + ant.antenna">
