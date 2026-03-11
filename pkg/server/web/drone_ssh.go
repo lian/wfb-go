@@ -577,6 +577,8 @@ func (c *DroneSSHClient) SetConfig(changes map[string]interface{}) error {
 	restartWfb := false
 	restartMajestic := false
 	restartAlink := false
+	stopAlink := false  // When true, disable alink entirely (don't restart)
+	startAlink := false // When true, starting alink fresh (don't double-restart)
 
 	// Process hardware changes
 	if hw, ok := changes["hardware"].(map[string]interface{}); ok {
@@ -799,6 +801,22 @@ func (c *DroneSSHClient) SetConfig(changes map[string]interface{}) error {
 				restartAlink = true
 			}
 		}
+		// Handle enabled/disabled state LAST (after config changes are applied)
+		// Runtime only - don't modify rc.local; alink_drone always starts on boot as safety fallback
+		if enabled, ok := al["enabled"].(bool); ok {
+			if enabled {
+				// Enable: start alink_drone (it will pick up config changes and take over control)
+				alinkCommands = append(alinkCommands,
+					"pgrep -x alink_drone > /dev/null || nohup alink_drone > /dev/null 2>&1 &")
+				startAlink = true
+			} else {
+				// Disable: kill alink_drone, restart wfb to restore static MCS/power/FEC from wfb.yaml
+				alinkCommands = append(alinkCommands,
+					"killall -9 alink_drone 2>/dev/null || true")
+				stopAlink = true
+				restartWfb = true
+			}
+		}
 	}
 
 	// Execute WFB commands in a single SSH call
@@ -838,7 +856,8 @@ func (c *DroneSSHClient) SetConfig(changes map[string]interface{}) error {
 		log.Printf("[drone-ssh] Reloading majestic...")
 		c.runCommand(client, "killall -1 majestic")
 	}
-	if restartAlink {
+	// Only restart alink if we're not stopping or starting it (those are handled above)
+	if restartAlink && !stopAlink && !startAlink {
 		log.Printf("[drone-ssh] Restarting alink_drone...")
 		c.runCommand(client, "killall -9 alink_drone 2>/dev/null; sleep 0.5; nohup alink_drone > /dev/null 2>&1 &")
 	}
