@@ -51,6 +51,9 @@ type Server struct {
 
 	// Pit mode state
 	pitMode *PitModeState
+
+	// Channel scanner state
+	scanner *ScannerState
 }
 
 // Stats holds current link statistics.
@@ -191,6 +194,7 @@ func NewServer(cfg Config) *Server {
 			Timeout: 10 * time.Second,
 		},
 		pitMode: NewPitModeState(),
+		scanner: NewScannerState(),
 	}
 }
 
@@ -229,6 +233,7 @@ func (s *Server) Run(ctx context.Context) error {
 	mux.HandleFunc("/api/drone/streams", s.handleDroneStreamsAPI)
 	mux.HandleFunc("/api/drone/streams/", s.handleDroneStreamActionAPI)
 	mux.HandleFunc("/api/pitmode", s.handlePitModeAPI)
+	mux.HandleFunc("/api/scanner", s.handleScannerAPI)
 
 	server := &http.Server{
 		Addr:    s.addr,
@@ -336,6 +341,7 @@ func (s *Server) SetPitModeCallbacks(getter func() int, setter func(int) error) 
 func (s *Server) IsPitModeEnabled() bool {
 	return s.pitMode.IsEnabled()
 }
+
 
 // handleStreamsAPI handles GET for streams list.
 func (s *Server) handleStreamsAPI(w http.ResponseWriter, r *http.Request) {

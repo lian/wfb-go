@@ -1,5 +1,5 @@
 // StatusBar.js - Main status bar with link status and key metrics
-const { computed } = Vue;
+const { computed, ref } = Vue;
 
 export default {
     name: 'StatusBar',
@@ -10,8 +10,10 @@ export default {
         nalCount: Number,
         pitMode: Object,
     },
-    emits: ['toggle-pit-mode'],
+    emits: ['toggle-pit-mode', 'open-scanner'],
     setup(props, { emit }) {
+        const dropdownOpen = ref(false);
+
         const rssiClass = computed(() => {
             const rssi = props.stats?.rssi;
             if (!rssi) return '';
@@ -28,15 +30,33 @@ export default {
             return errors === 0 ? 'good' : errors < 5 ? 'warn' : 'bad';
         });
 
+        function toggleDropdown() {
+            dropdownOpen.value = !dropdownOpen.value;
+        }
+
+        function closeDropdown() {
+            dropdownOpen.value = false;
+        }
+
         function onTogglePitMode() {
+            closeDropdown();
             emit('toggle-pit-mode');
         }
 
+        function onOpenScanner() {
+            closeDropdown();
+            emit('open-scanner');
+        }
+
         return {
+            dropdownOpen,
             rssiClass,
             fecLostClass,
             decErrorsClass,
+            toggleDropdown,
+            closeDropdown,
             onTogglePitMode,
+            onOpenScanner,
         };
     },
     template: `
@@ -83,15 +103,21 @@ export default {
                 <span class="stat-label">TX Dropped</span>
                 <span class="stat-value" :class="stats?.txDropped > 0 ? 'warn' : ''">{{ stats?.txDropped || 0 }}</span>
             </div>
-            <button
-                class="pit-mode-btn"
-                :class="{ active: pitMode?.enabled }"
-                @click="onTogglePitMode"
-                :disabled="pitMode?.loading"
-                :title="pitMode?.enabled ? 'Pit Mode Active - Click to disable' : 'Enable Pit Mode (reduce TX power)'"
-            >
-                {{ pitMode?.loading ? '...' : (pitMode?.enabled ? 'PIT ON' : 'PIT') }}
-            </button>
+
+            <!-- Actions Dropdown -->
+            <div class="actions-dropdown" @mouseleave="closeDropdown">
+                <button class="actions-btn" :class="{ active: pitMode?.enabled }" @click="toggleDropdown">
+                    Actions <span class="dropdown-arrow">{{ dropdownOpen ? '▲' : '▼' }}</span>
+                </button>
+                <div class="dropdown-menu" v-show="dropdownOpen">
+                    <button class="dropdown-item" @click="onOpenScanner">📡 Channel Scanner</button>
+                    <button class="dropdown-item" :class="{ 'pit-active': pitMode?.enabled }"
+                        @click="onTogglePitMode" :disabled="pitMode?.loading">
+                        {{ pitMode?.enabled ? '🔴' : '⚡' }}
+                        {{ pitMode?.loading ? 'Loading...' : (pitMode?.enabled ? 'Disable Pit Mode' : 'Enable Pit Mode') }}
+                    </button>
+                </div>
+            </div>
         </div>
     `
 };

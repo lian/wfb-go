@@ -6,6 +6,7 @@ import StreamPanel from './components/StreamPanel.js';
 import LinkQuality from './components/LinkQuality.js';
 import AdaptiveLinkPanel from './components/AdaptiveLinkPanel.js';
 import ConfigPanel from './components/ConfigPanel.js';
+import ChannelScannerPanel from './components/ChannelScannerPanel.js';
 
 const { createApp, ref, provide, onMounted, onUnmounted } = Vue;
 
@@ -18,6 +19,7 @@ const App = {
         LinkQuality,
         AdaptiveLinkPanel,
         ConfigPanel,
+        ChannelScannerPanel,
     },
     setup() {
         const connected = ref(false);
@@ -34,6 +36,9 @@ const App = {
 
         // Pit mode state
         const pitMode = ref({ enabled: false, loading: false, error: null });
+
+        // Scanner modal state
+        const scannerOpen = ref(false);
 
         // Provide rawStats for child components (e.g., StreamsTab needs streams_running)
         provide('stats', rawStats);
@@ -116,6 +121,15 @@ const App = {
             }
         }
 
+        // Scanner modal
+        function openScanner() {
+            scannerOpen.value = true;
+        }
+
+        function closeScanner() {
+            scannerOpen.value = false;
+        }
+
         // Toggle pit mode
         async function togglePitMode() {
             if (pitMode.value.loading) return;
@@ -167,10 +181,13 @@ const App = {
             adaptiveLink,
             showPanels,
             pitMode,
+            scannerOpen,
             onVideoConnected,
             onVideoDisconnected,
             togglePanels,
             togglePitMode,
+            openScanner,
+            closeScanner,
         };
     },
     template: `
@@ -197,6 +214,7 @@ const App = {
                 :nalCount="nalCount"
                 :pitMode="pitMode"
                 @toggle-pit-mode="togglePitMode"
+                @open-scanner="openScanner"
             />
 
             <div class="panels-toggle" @click="togglePanels">
@@ -221,6 +239,11 @@ const App = {
             </div>
 
             <ConfigPanel />
+
+            <ChannelScannerPanel
+                :isOpen="scannerOpen"
+                @close="closeScanner"
+            />
         </div>
     `
 };
