@@ -3,8 +3,7 @@ import VideoPlayer from './components/VideoPlayer.js';
 import StatusBar from './components/StatusBar.js';
 import AntennaPanel from './components/AntennaPanel.js';
 import StreamPanel from './components/StreamPanel.js';
-import BitrateGraph from './components/BitrateGraph.js';
-// import LinkQuality from './components/LinkQuality.js';  // TODO: no real latency measurement available
+import LinkQuality from './components/LinkQuality.js';
 import AdaptiveLinkPanel from './components/AdaptiveLinkPanel.js';
 import ConfigPanel from './components/ConfigPanel.js';
 
@@ -16,8 +15,7 @@ const App = {
         StatusBar,
         AntennaPanel,
         StreamPanel,
-        BitrateGraph,
-        // LinkQuality,
+        LinkQuality,
         AdaptiveLinkPanel,
         ConfigPanel,
     },
@@ -209,13 +207,9 @@ const App = {
                 <AdaptiveLinkPanel
                     :adaptiveLink="adaptiveLink"
                 />
-                <!-- LinkQuality disabled - no real latency measurement available
                 <LinkQuality
-                    :stats="stats"
-                />
-                -->
-                <BitrateGraph
                     :bitrate="bitrateNum"
+                    :stats="stats"
                 />
                 <AntennaPanel
                     :antennas="antennas"
